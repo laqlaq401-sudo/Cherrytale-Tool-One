@@ -15,8 +15,11 @@
 |---|---|
 | 明文密码 + 邮箱 | `e23d14f`（`tools/extract_saz_posts.py:17`） |
 | 真实平台 userId（可用作登录凭据） | `e23d14f`、`5f4a724`、`80a60b7` |
-| 明文邮箱 `trbpx1859@9662.com` | `0e43d61` |
+| 明文邮箱（某笔记文件内） | `0e43d61` |
 | 提交元数据里的邮箱 | **全部 10 个提交** |
+
+> ⚠️ 具体串值不在本文件记录。要复扫时，把真实串从安全的本地来源
+> （如 `config_local.py`、私密备忘）临时读入环境变量，**不要写进任何会被提交的文件**。
 
 **关键认知**：改文件、甚至 `git rebase` 都清不干净 —— 只要推过一次，
 旧对象就留在 GitHub 服务器上直到其垃圾回收（不可控）。
@@ -82,7 +85,8 @@ gh repo create laqlaq401-sudo/Cherrytale-tool-One --private --description "Cherr
 cd "C:/Users/Anqi Liu/Desktop/Cherrytale tool One"
 
 # 先自查一遍（必须为空输出）
-git grep -nE "13167943|13170572|8176402|6255757|13394129|6138759|ER3bf75cca|ER23f20a95|trbpx1859|1009885373|13579qetuo" -- . || echo "✅ 工作区干净"
+# ⚠️ 真实串从安全来源临时读入，切勿写死在本文件里（曾因此造成二次泄漏）
+git grep -nE "$SENSITIVE_PATTERN" -- . || echo "✅ 工作区干净"
 
 # 把现有历史归档到本地分支（不推送），再基于当前状态开一条全新历史
 git branch legacy-history-archive        # 保住旧历史，万一要查
@@ -149,7 +153,8 @@ gh auth refresh -h github.com -s delete_repo
 cd "C:/Users/Anqi Liu/Desktop/Cherrytale tool One"
 
 echo "=== 1. 已跟踪文件中的敏感串 ==="
-git ls-files -z | xargs -0 grep -nE "13579qetuo|1009885373|ER3bf75cca|ER23f20a95|trbpx1859|13167943|13170572|8176402|6255757|13394129|6138759"
+# ⚠️ 真实串从安全来源临时读入（如 env），不要写死
+git ls-files -z | xargs -0 grep -nE "$SENSITIVE_PATTERN"
 
 echo "=== 2. 确认凭据文件未被跟踪 ==="
 git ls-files | grep -E "\.auth_token|\.session\.json|\.platform_accounts|config_local|\.platform_credentials" || echo "✅ 无凭据文件入库"

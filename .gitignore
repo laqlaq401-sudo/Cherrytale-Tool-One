@@ -23,6 +23,8 @@ notes/vcode_algorithm.md
 notes/git_reset_plan.md
 notes/tests_decoupling_plan.md
 notes/log_rewrite_plan.md
+# 安全审计报告：逐行列出了历史敏感数据位置，等于一份索引，不入库
+notes/security_audit_*.md
 
 # ---- Python 运行时产物 ----
 __pycache__/

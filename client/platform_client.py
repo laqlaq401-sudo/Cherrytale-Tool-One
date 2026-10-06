@@ -525,7 +525,7 @@ class PlatformClient:
     ) -> PlatformToken:
         """用**账号密码**换取临时 access token（含验证码预检）。
 
-        :param account: 平台账号（实测是邮箱，例如 ``xxx@9662.com``）。
+        :param account: 平台账号（实测为邮箱形式）。
         :param password: 明文密码。**只在本方法内使用**：立刻 base64 编码进请求体，
             不写日志、不落盘、不进异常信息。
         :param game_id: 游戏 ID；``None`` 表示用 ``config.PLATFORM_LOGIN_GAME_ID``
