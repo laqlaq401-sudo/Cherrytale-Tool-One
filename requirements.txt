@@ -1,0 +1,113 @@
+# ============================================================
+# Cherrytale tool One —— Python 依赖清单
+# ------------------------------------------------------------
+# 目标解释器：Python 3.11.x  （本机实测 3.11.9 / win_amd64 / MSC v.1938）
+# 安装命令  ：python -m pip install -r requirements.txt
+#
+# 【2026-10-06 统一决策】PC 端原用 3.14，安卓端 Chaquopy 只支持到 3.11，
+#   跨版本会导致"PC 单测全绿、安卓真机 SyntaxError / 依赖缺失闪退"，
+#   故 PC 端向下对齐到 3.11。以下依赖已实测在 3.11 上**均有 cp311 预编译轮子**，
+#   版本 pin 无需改动（cryptography-50.0.1-cp311-abi3-win_amd64、
+#   pydantic_core-2.46.5-cp311-cp311-win_amd64 等）。
+#
+# 版本锁定说明：
+#   这里用 == 精确锁版本，而不是 >=。原因是我们做的是“协议复现”，
+#   必须保证你和我跑出来的字节级结果一致；版本一漂移，签名/加密结果就可能对不上。
+# ============================================================
+
+# ---------- 运行期核心 ----------
+requests==2.34.2
+# HTTP 通信层：Session / 连接池 / Cookie 保持 / 自动重试。
+# 纯 Python 包（py3-none-any 轮子），官方要求 Python >= 3.10，3.11 可用。
+
+pydantic==2.13.5
+# 协议数据模型（Req / Res）的字段校验与 JSON 序列化。
+# 它的核心 pydantic-core 已有 cp311 预编译轮子，3.11 可直接安装。
+
+cryptography==50.0.1
+# AES / 哈希 / HMAC 等加密原语，用于还原游戏的签名与加解密链路。
+# 官方分类器包含 Python 3.11，并提供 cp311-abi3-win_amd64 预编译轮子。
+
+truststore==0.10.4
+# 让 Python 的 TLS 校验改用**操作系统证书信任库**（Windows = CryptoAPI/schannel）。
+# 【为什么必须装】实测：目标网关下发的证书链里第 3 张是
+#   「交叉签名版 GTS Root R4」（由 GlobalSign Root CA 签发），
+#   Python 自带 OpenSSL 在这种链上无法建链，报
+#   `unable to get local issuer certificate`；而 curl / 浏览器（用系统库）却正常。
+#   装上它即可与浏览器行为一致，同时获得「自动补齐中间证书 + CRL 吊销检查」。
+#   完整排查记录见 client/tls.py 的模块文档。
+# 纯 Python 包（py3-none-any 轮子），官方要求 Python >= 3.10，3.11 可用。
+
+# ---------- 开发与测试 ----------
+pytest==9.1.1
+# tests/ 下各模块最小单元测试的执行器。纯 Python 包，要求 Python >= 3.10。
+
+# ---------- Web 可视化前端（2026-10-04 全平台统一采用标准库 http.server.ThreadingHTTPServer，零第三方 HTTP 依赖） ----------
+# fastapi==0.141.1
+# 【已废弃】双端现已统一使用标准库 ThreadingHTTPServer（webapi/app.py），
+# 消除 fastapi/pydantic-core 在安卓端 Chaquopy 无法构建的问题，PC 端与 Android 端共用同一套纯标准库实现。
+#
+# uvicorn==0.53.0
+# 【已废弃】同上，已全面改用标准库 HTTP 服务，不再需要 ASGI 服务器。
+
+# pywebview==6.2.1
+# 【可选】PC "独立窗口"外壳（main_gui.py 用）。装了就是原生窗口，
+# 不装则 main_gui.py 自动回退到「用 Edge/Chrome 的 --app 模式开一个无地址栏窗口」，
+# 网页版与手机端功能完全不受影响，所以这里**默认保持注释**。
+# 三条说明（为什么它需要单独交代）：
+#   1. pywebview 自己的分类器只写到 3.13，但它在 Windows 上依赖 pythonnet，
+#      而 pythonnet 3.x **明确支持 3.14**（分类器含 3.14），因此理论可用；
+#   2. Windows 后端实际渲染用的是系统 WebView2（Edge 内核），
+#      本机已确认装有 WebView2 Runtime（153.0.4234.48）；
+#   3. 想启用执行：python -m pip install pywebview==6.2.1
+#      （会一并装上 pythonnet / bottle / proxy_tools / typing_extensions）
+#      实测组合：pywebview 6.2.1 + pythonnet 3.1.0 + clr_loader 0.3.1 + Python 3.14.3。
+#      ⚠️ 2026-10-06 起解释器已统一到 3.11，上面这套 3.14 的结论不再适用：
+#         pythonnet 3.1.0 只提供 netcore 程序集、pywebview 6.2.1 的 winforms 后端
+#         又依赖 .NET Framework 专有类型，两者与解释器版本无关，因此 3.11 下
+#         大概率同样起不来。**不影响主链路**——main_gui.py 会自动回退到
+#         Edge/Chrome 的 --app 独立窗口。要用原生窗口需在 3.11 上重新验证并重跑
+#         tools/patch_pywebview_winforms.py。
+#   5. 【2026-10-03 必修 · 原生窗口】装完 pywebview 后**必须**跑一次本地补丁：
+#        .venv/Scripts/python.exe tools/patch_pywebview_winforms.py
+#      否则 pywebview 在 .NET Core/.NET 10 下连 WinForms 后端都 import 不了
+#      （它的 OpenFolderDialog **类体**用了 .NET Framework 专有类型
+#        System.Windows.Forms.FileDialogNative+IFileDialog，.NET 10 里不存在），
+#      表现就是"窗口弹不出来或纯白"。重建 venv / 重新 pip install 后都要重跑
+#      （PyInstaller 会照抄 venv 里这份文件，打包前先跑）。详细定位见
+#      notes/web_layer.md「§十二补 5」；回退方案是 main_gui.py 自动改用 Edge --app 窗口。
+#   4. 【2026-10-03 真机定位：原生窗口在当前组合下起不来，已改为"自动回退"】
+#      三层原因（完整证据：.venv/Scripts/python.exe tools/probe_clr.py）：
+#        ① pythonnet 在 Windows 上默认走 .NET Framework，但 3.1.0 的 wheel 里
+#           runtime/Python.Runtime.dll 只有 .NETStandard2.0 一份（递归扫过，没有
+#           netfx 子目录）⇒ `Failed to resolve Python.Runtime.Loader.Initialize`；
+#        ② 改走 coreclr 后缺 System.Windows.Forms / System.Windows.Forms 依赖的
+#           Microsoft.Win32.SystemEvents ⇒ 需自备含 Microsoft.WindowsDesktop.App 的
+#           runtimeconfig（main_gui.prepare_clr_runtime 现在会自动生成并加载）；
+#        ③ 就算 ①② 都补齐，pywebview 6.2.1 的 winforms.py 仍在**导入期**崩：其
+#           OpenFolderDialog 类体用了 .NET Framework 专有的
+#           `System.Windows.Forms.FileDialogNative+IFileDialog`（.NET Core 没有）。
+#      降级 pythonnet 也不行：3.0.5 的 requires_python 是 "<3.14"，而 Python 3.14
+#      支持是 3.1.0 才加的。
+#      ⇒ main_gui.py 现在会在启动失败时自动改用 Edge/Chrome 的 --app 独立窗口
+#        （无地址栏，功能与网页/手机端完全一致），不再把 traceback 甩给用户。
+#        详见 notes/web_layer.md「§十二补 4」。
+
+# ---------- 协议层预告（下一阶段确认报文结构后再启用，届时验证 3.14 兼容性） ----------
+# protobuf          # 官方库，PyPI 当前最新 7.36.2。
+#                   #   用途：dump.cs 中 com.auer.game.protobuf 命名空间有 1098 个类，
+#                   #   且存在 3956 处 ProtoMember 属性（即字段编号），可据此反推 .proto。
+# blackboxprotobuf  # PyPI 当前最新 1.0.1。无 schema 也能解码未知 protobuf，适合初期探包。
+
+# ---------- 暂不启用 ----------
+# websocket-client  # 若聊天/推送走 WebSocket（dump 中存在 BestHTTP WebSocketFrameReader）
+# loguru            # 若需要更友好的彩色日志（否则用标准库 logging）
+# python-dotenv     # 若希望账号配置从 .env 文件读取（否则用 os.getenv）
+
+# ============================================================
+# 【注意】不要使用 pycryptodome
+# ------------------------------------------------------------
+# pycryptodome 3.23.0（PyPI 最新）的分类器只到 Python 3.13，且未提供 cp314 轮子。
+# 在你这台 Python 3.14 机器上安装时会退化为“本地编译”，大概率因缺少 MSVC 而失败。
+# 加密需求统一用 cryptography 覆盖，功能上完全等价（AES / MD5 / SHA / HMAC）。
+# ============================================================

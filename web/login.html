@@ -1,0 +1,172 @@
+<!doctype html>
+<!--
+  米娅小助手 · 登录门面页（2026-09-30 从 index.html 拆出）
+
+  【为什么登录要单独一页】
+  真实使用顺序是固定的：**先证明你是谁（登录）→ 再决定进哪个区（选区）→
+  才谈得上操作**。旧版把这三步画在同一个 HTML 里靠 .hidden 切换，
+  "门"和"屋子"混在一个文件里；现在登录+选区独立成 login.html，
+  选好区之后跳转 index.html（任务执行界面）—— 两页各自只有一个职责。
+
+  【数据从哪来】
+  账号库 / 区服列表都来自后端只读接口（/api/accounts、/api/login/servers），
+  前端不做任何协议解析；"进入游戏"成功后会话已写在服务端，
+  这里把角色名记进 sessionStorage 后直接跳转 /。
+-->
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+    <meta name="color-scheme" content="light dark" />
+    <title>登录 · 米娅小助手</title>
+    <script>
+      (function () {
+        try {
+          var auto = localStorage.getItem("cherrytale.themeAuto");
+          var saved = localStorage.getItem("cherrytale.theme");
+          var isLight = false;
+          if (auto === "true" || !saved) {
+            isLight = window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches;
+          } else {
+            isLight = saved === "light";
+          }
+          if (isLight) {
+            document.documentElement.setAttribute("data-theme", "light");
+          } else {
+            document.documentElement.setAttribute("data-theme", "dark");
+          }
+        } catch (e) {}
+      })();
+    </script>
+    <link rel="manifest" href="assets/manifest.webmanifest" />
+    <link rel="icon" type="image/png" href="assets/icons/brand/favicon.png" />
+    <link rel="apple-touch-icon" href="assets/icons/brand/icon-192.png" />
+    <link rel="stylesheet" href="assets/styles.css?v=20261006_8" />
+  </head>
+  <body class="gate-body">
+    <!--
+      登录页刻意不做顶栏，改为「整屏居中 + 品牌主视觉」：
+        · 门面页的任务是 10 秒内做完一件事，顶栏属于控制台（index.html）；
+        · 窗口三键（— □ ✕）由 main_gui.py 注入；本页没有 #win-dock，
+          注入脚本会走 position:fixed 兜底贴在右上角，正好不遮挡品牌视觉。
+    -->
+    <main class="gate">
+      <!-- ================= 品牌主视觉 + 步骤指示条 ================= -->
+      <div class="gate-hero">
+        <div class="gate-mark">
+          <img class="brand-logo" src="assets/icons/brand/logo.png?v=20261005_5" alt="米娅小助手" />
+        </div>
+        <div class="gate-wordmark">
+          <strong>米娅小助手</strong>
+          <span class="gate-tagline">
+            <span id="app-version"></span>
+            <!-- 连接状态点（2026-10-06 改版）：与任务页顶栏同一套 —— 只靠颜色判断，
+                 文字转到 title / aria-label。两页共用 .conn 样式，必须同步改，
+                 否则固定 9px 的圆点上会压出文字。 -->
+            <span class="gate-conn-wrap"><span id="conn" class="conn conn--wait" data-state="wait" role="status" aria-label="正在连接" title="正在连接"></span></span>
+          </span>
+        </div>
+        <!-- 步骤指示条：① 登录 → ② 选区。由 login.js 的 setGateScreen() 联动 -->
+        <ol id="gate-steps" class="gate-steps" aria-label="登录流程">
+          <li class="gate-step gate-step--on" data-step="login">
+            <span class="gate-step-dot" aria-hidden="true">1</span>
+            <span>登录账号</span>
+          </li>
+          <li class="gate-step-sep" aria-hidden="true"></li>
+          <li class="gate-step" data-step="server">
+            <span class="gate-step-dot" aria-hidden="true">2</span>
+            <span>选择区服</span>
+          </li>
+        </ol>
+      </div>
+
+      <!-- ================= 访问令牌（按需出现） ================= -->
+      <section id="token-card" class="card hidden">
+        <h2 class="card-title">访问令牌</h2>
+        <p class="hint">
+          服务端用 <code>--token</code> 启动时，所有接口都要求令牌。它只保存在浏览器的
+          <strong>会话存储</strong>里（关掉标签页即失效），不会写进磁盘。
+        </p>
+        <div class="row">
+          <input id="token-input" type="password" placeholder="粘贴令牌" autocomplete="off" />
+          <button id="btn-token-save" class="btn" type="button">保存并重连</button>
+        </div>
+        <p id="token-error" class="error hidden"></p>
+      </section>
+
+      <!-- ================= 步骤 ①：登录 =================
+           ★ 2026-10-05：删掉「欢迎回来」说明段（手机上挤占首屏，信息量为零）；
+             账号选择从自绘下拉改成账号卡列表（见 login.js 的 renderAccountCards）：
+             区服角色卡=角色名+Lv+区服+邮箱，平台账号卡=邮箱+免密选区。
+             原生 select → 自绘下拉 → 卡列表的演进原因见 git 历史。 -->
+      <section id="gate-login" class="screen">
+        <div class="card">
+          <h2 class="card-title">
+            已保存的账号
+            <button id="btn-refresh-accounts" class="linkbtn" type="button">刷新</button>
+          </h2>
+          <!-- 账号卡列表挂载点：由 login.js 渲染（点击选中，主按钮触发登录）。
+               ★ 历史包袱提醒：这里曾是自绘下拉（customSelect），2026-10-05 起换卡列表，
+               凡取值的代码都走 state.selectedKey。 -->
+          <div id="login-accounts-mount"></div>
+          <button id="btn-login-saved" class="btn btn--primary" type="button" disabled>登录</button>
+        </div>
+
+        <details class="card details" id="gate-password-details">
+          <summary>
+            <span>首次登录 / 换号：输入账号密码</span>
+            <span class="gate-details-caret" aria-hidden="true">▸</span>
+          </summary>
+          <div class="gate-details-body">
+            <div class="field">
+              <label for="login-email">平台账号（邮箱）</label>
+              <input id="login-email" type="text" autocomplete="username" placeholder="you@example.com" />
+            </div>
+            <div class="field">
+              <label for="login-password">密码</label>
+              <input id="login-password" type="password" autocomplete="current-password" />
+            </div>
+            <p class="hint">
+              密码只在<strong>内存</strong>里传给服务端换取令牌，用完立刻清除：
+              不落盘、不回显、不进日志。登录成功后会自动记入账号库。
+            </p>
+            <button id="btn-login-password" class="btn" type="button">用账号密码登录</button>
+          </div>
+        </details>
+
+        <p id="login-error" class="error hidden"></p>
+        <p id="login-busy" class="hint hidden">正在登录（会向官方网关确认账号态，约 2~4 秒）…</p>
+      </section>
+
+      <!-- ================= 步骤 ②：选区 =================
+           ★ 2026-10-06：删掉标题块 .hero 与搜索框，筛选卡瘦成两行（开关 + 数量汇总）。
+             ① 原 .hero 里的「选择区服」标题冗余（步骤条第 2 步已经说了）；
+             ② 原副标题把平台 userId 打码串（38 字符）端到脸上，
+                纯噪音；账号身份在第 1 步的账号卡里已经说清楚了；
+             ③ 搜索框对"默认只看有角色的区"（25 条）属于过度设计。
+             改后首屏腾出约 100px 全留给区服列表。 -->
+      <section id="gate-server" class="screen hidden">
+        <div class="card server-filter">
+          <label class="switch switch--inline">
+            <input id="server-only-character" type="checkbox" checked />
+            <span>只看有角色的区</span>
+          </label>
+          <p class="hint" id="server-count"></p>
+        </div>
+
+        <div id="server-list" class="server-list"></div>
+
+        <p id="server-error" class="error hidden"></p>
+
+        <div class="sticky-actions">
+          <button id="btn-back-login" class="btn" type="button">返回登录</button>
+          <button id="btn-enter-server" class="btn btn--primary" type="button" disabled>进入游戏</button>
+        </div>
+      </section>
+    </main>
+
+    <!-- 版本查询串与 index.html 保持一致：改完前端若不升它，手机会一直吃旧缓存 -->
+    <script src="assets/common.js?v=20261005_8"></script>
+    <script src="assets/login.js?v=20261006_2"></script>
+  </body>
+</html>

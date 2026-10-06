@@ -1,0 +1,117 @@
+# ============================================================
+# Cherrytale tool One —— git 忽略规则
+# 原则：仓库只留「人写的源码 + 工程性文档 + 必要资产」；
+# 能由工具重新生成、体积极大、或含个人凭据的一律不入库。
+# 排除 ≠ 删除：这些目录/文件仍留在磁盘上，只是 git 不看它们。
+# 体积雷区 ~3.5GB：tmp/ 1.9G、captures/ 342M、Cherrytale Asset/ 366M、
+#   Cherrytale IL2CPP/ 227M、dist/ + android build 752M
+# ============================================================
+
+# ---- 协议逆向 / 抓包素材 ----
+captures/
+*.saz
+*.har
+*.b64
+Cherrytale IL2CPP/
+Cherrytale Asset/
+repomix-output.xml
+
+# ---- 逆向结论笔记（本地 notes/ 可查；KEY 需要时注入 config_local.py）----
+notes/dossier/
+notes/recon_findings.md
+notes/vcode_algorithm.md
+notes/git_reset_plan.md
+notes/tests_decoupling_plan.md
+notes/log_rewrite_plan.md
+
+# ---- Python 运行时产物 ----
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.venv/
+venv/
+env/
+# 2026-10-06 Python 版本一致化（3.14 → 3.11）留下的 venv 备份，
+# 体积 100MB+，绝不能被误提交。
+.venv_backup_*/
+.venv_broken_bak/
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# ---- 测试与静态分析缓存 ----
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# ---- 本地敏感信息：账号 / Token / 会话 / 偏好，严禁提交 ----
+.env
+.env.*
+!.env.example
+# 平台鉴权 Token（echo <token> > .auth_token；.expired-* 为轮换历史）
+.auth_token
+.auth_token.expired-*
+# 游戏会话状态（1004 令牌 + playerId + 区服）
+.session.json
+.session.json.bak
+# 平台账号凭据（默认不落盘，仅显式选择落文件时才存在）
+.platform_credentials
+.platform_credentials.bak
+# 多账号令牌库（明文 accessToken/refreshToken）
+.platform_accounts.json
+# ---- 运行时状态 / 用户偏好缓存：删掉 = 对应功能回到初始状态 ----
+# 活动区域/关卡候选缓存（含 playerId）
+.activity_cache.json
+# 自动任务「每游戏日一次」记账
+.daily_auto_state.json
+# 登录后自动签到记账（自然日 0 点，见 tasks/login_signin.py）
+.login_signin_state.json
+# 钻石总闸偏好
+.spend_state.json
+# 任务勾选/参数偏好
+.selection_state.json
+# 逆向常量（如 GAME_V_CODE_KEY）的本机存放点，绝不可入库
+config_local.py
+
+# ---- 日志 ----
+*.log
+logs/
+
+# ---- 临时输出 / 工具临时目录（.clinerules 终端卫生：长任务输出先进 tmp/）----
+tmp/
+# 根目录 tmpXXXXXX/ 随机名目录；pip / pytest 临时目录
+/tmp*/
+pip-build-tracker-*/
+pip-download-*/
+pytest-of-*/
+
+# ---- IDE / AI 工具本机配置 ----
+.workbuddy/
+.workbuddy-ai/
+.zcode/
+.zcodeignore
+.clineignore
+.clinerules
+.vscode/
+.idea/
+AGENT.md
+
+# ---- Node / 前端 ----
+node_modules/
+# styles.css 由 npm run build:css 重新生成，这份 backup 是旧版残留
+web/assets/styles.backup.css
+
+# ---- Android：只跟源码 ----
+# build/、dist/、.gradle/、.idea/ 的任意层级规则已在上面，此处不重复
+.gradle/
+android/local.properties
+# 打包脚本把根目录源码拷贝进来的副本（可重新生成）
+android/app/src/main/python/
+
+# ---- 头像（运行时 CDN 落盘缓存 + 预提取静态目录，均可再生成）----
+avatars/
+web/assets/avatars/

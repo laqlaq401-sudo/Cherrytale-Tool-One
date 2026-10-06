@@ -1,0 +1,2558 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ============================================================
+   米娅小助手 · iOS / macOS 极简扁平样式体系 (全端优化版)
+   ------------------------------------------------------------
+   【排版与视觉原则】
+   1. 字体：system-ui 打头，三端各自命中自家最简约的原生 UI 字体
+      （mac = SF Pro / Win = Segoe UI / 安卓 = Roboto），西文永远
+      不落到中文字体的拉丁字形上；中文按平台接力到各家的现代黑体，
+      Windows 兜底雅黑。零 webfont 依赖，断网也能正确渲染。
+   2. 字号逻辑（2026-10-02 定案）：正文与标题沿用原阶；**所有注释/
+      辅助文字一律 px 锁定（10–12px），绝不使用 rem 阶** ——
+      根字号是 15px，rem 阶会算出 11.25px 这类非整数字号，
+      在 Windows 125%/150% DPI 与安卓 WebView 放大下发虚发丑；
+      px 锁定后注释在任何端都恒定小于正文，不会意外变大。
+   3. 中文字阶：中文严禁负字距（tracking-tight），层级梯度清晰舒展；
+   4. 视觉阶层：纯黑基底 (0#) -> 卡片表面 (1#) -> 控件凹凸 (2#)，
+      极细 1px 微反光分割线，彻底消除厚重脏乱感；
+   5. PC 桌面专属：细滚动条、多列仪表盘、窗口拖拽区与自绘窗控、
+      展开任务双列自适应等全面强化桌面大屏体验。
+   ============================================================ */
+
+:root {
+  --ios-bg: #000000;
+  --ios-surface-1: rgba(24, 24, 27, 0.85);
+  --ios-surface-1-solid: #18181b;
+  --ios-surface-2: rgba(39, 39, 42, 0.65);
+  --ios-surface-3: #2c2c2e;
+  --ios-separator: rgba(255, 255, 255, 0.08);
+  --ios-separator-strong: rgba(255, 255, 255, 0.16);
+  --ios-text-primary: #f4f4f5;
+  --ios-text-secondary: #a1a1aa;
+  --ios-text-tertiary: #71717a;
+
+  --topbar-bg: rgba(0, 0, 0, 0.85);
+  --sidebar-bg: rgba(18, 18, 20, 0.85);
+  --card-bg: rgba(24, 24, 27, 0.8);
+  --card-border: rgba(255, 255, 255, 0.08);
+  --card-border-hover: rgba(255, 255, 255, 0.14);
+  --card-shadow: 0 2px 10px rgba(0, 0, 0, 0.25);
+
+  --tab-text: #a1a1aa;
+  --tab-text-hover: #ffffff;
+  --tab-hover-bg: rgba(255, 255, 255, 0.05);
+  --tab-active-text: #ffffff;
+  --tab-active-bg: rgba(255, 255, 255, 0.09);
+  --tab-active-border: rgba(255, 255, 255, 0.08);
+  --tab-active-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+
+  --input-bg: rgba(39, 39, 42, 0.8);
+  --input-border: rgba(255, 255, 255, 0.1);
+  --input-text: #ffffff;
+  --btn-default-bg: rgba(39, 39, 42, 0.9);
+  --btn-default-hover: rgba(63, 63, 70, 0.9);
+  --btn-default-text: #ffffff;
+  --btn-ghost-bg: rgba(63, 63, 70, 0.6);
+  --stat-bg: rgba(39, 39, 42, 0.4);
+  --stat-hover-bg: rgba(39, 39, 42, 0.65);
+  --task-bg: rgba(39, 39, 42, 0.4);
+  --task-on-bg: rgba(24, 24, 27, 0.9);
+  --task-expanded-bg: rgba(24, 24, 27, 0.95);
+  --log-bg: #09090b;
+  --log-text: #d4d4d8;
+  --switch-track: #39393d;
+
+  --win-btn-bg: rgba(255, 255, 255, 0.08);
+  --win-btn-border: rgba(255, 255, 255, 0.08);
+  --win-btn-color: #d4d4d8;
+  --win-btn-hover-bg: rgba(255, 255, 255, 0.16);
+  --win-btn-hover-color: #ffffff;
+
+  --ios-blue: #007aff;
+  --ios-green: #34c759;
+  --ios-orange: #ff9500;
+  --ios-red: #ff3b30;
+  --ios-purple: #af52de;
+  --topbar-h: 48px;
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --scrollbar-thumb: rgba(255, 255, 255, 0.16);
+  --scrollbar-thumb-hover: rgba(255, 255, 255, 0.3);
+}
+
+[data-theme="light"] {
+  --ios-bg: #f5f5f7;
+  --ios-surface-1: #ffffff;
+  --ios-surface-1-solid: #ffffff;
+  --ios-surface-2: #f3f4f6;
+  --ios-surface-3: #e5e7eb;
+  --ios-separator: rgba(0, 0, 0, 0.08);
+  --ios-separator-strong: rgba(0, 0, 0, 0.16);
+  --ios-text-primary: #111827;
+  --ios-text-secondary: #4b5563;
+  --ios-text-tertiary: #6b7280;
+
+  --topbar-bg: rgba(255, 255, 255, 0.9);
+  --sidebar-bg: rgba(246, 246, 248, 0.94);
+  --card-bg: #ffffff;
+  --card-border: rgba(0, 0, 0, 0.08);
+  --card-border-hover: rgba(0, 0, 0, 0.16);
+  --card-shadow: 0 2px 10px rgba(0, 0, 0, 0.04);
+
+  --tab-text: #4b5563;
+  --tab-text-hover: #111827;
+  --tab-hover-bg: rgba(0, 0, 0, 0.04);
+  --tab-active-text: #111827;
+  --tab-active-bg: rgba(0, 0, 0, 0.07);
+  --tab-active-border: rgba(0, 0, 0, 0.06);
+  --tab-active-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+
+  --input-bg: #ffffff;
+  --input-border: rgba(0, 0, 0, 0.14);
+  --input-text: #111827;
+  --btn-default-bg: #f3f4f6;
+  --btn-default-hover: #e5e7eb;
+  --btn-default-text: #1f2937;
+  --btn-ghost-bg: #f3f4f6;
+  --stat-bg: #ffffff;
+  --stat-hover-bg: #fcfcfd;
+  --task-bg: #ffffff;
+  --task-on-bg: #ffffff;
+  --task-expanded-bg: #ffffff;
+  --log-bg: #ffffff;
+  --log-text: #374151;
+  --switch-track: #e5e5ea;
+
+  --win-btn-bg: rgba(0, 0, 0, 0.05);
+  --win-btn-border: rgba(0, 0, 0, 0.08);
+  --win-btn-color: #374151;
+  --win-btn-hover-bg: rgba(0, 0, 0, 0.1);
+  --win-btn-hover-color: #111827;
+  --scrollbar-thumb: rgba(0, 0, 0, 0.18);
+  --scrollbar-thumb-hover: rgba(0, 0, 0, 0.35);
+}
+
+/* ============================================================
+   OPPO Sans 4.0 全局品牌字体
+   ============================================================ */
+@font-face {
+  font-family: "OPPO Sans";
+  src: url("fonts/OPPO-Sans-4.0.ttf") format("truetype");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+html {
+  font-size: 15px; /* iOS 规范推荐基础字阶 */
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  background-color: var(--ios-bg);
+  color: var(--ios-text-primary);
+  font-family: "OPPO Sans", "OPPOSans", system-ui, -apple-system, "Segoe UI Variable Text", "Segoe UI", Roboto, "PingFang SC", "HarmonyOS Sans SC", "MiSans", "Noto Sans CJK SC", "Source Han Sans SC", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
+  letter-spacing: 0.01em;
+  line-height: 1.5;
+  -webkit-tap-highlight-color: transparent;
+  min-height: 100dvh;
+}
+
+body:not(.gate-body) {
+  height: 100dvh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ------------------- PC 端原生微细滚动条 (macOS 悬浮细滑块风格) ------------------- */
+*::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 9999px;
+  transition: background 0.2s ease;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+}
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+
+code {
+  font-family: ui-monospace, "SF Mono", "Cascadia Code", Consolas, Menlo, monospace;
+  @apply text-[12px] px-1.5 py-0.5 rounded-md;
+  background-color: var(--btn-default-bg);
+  color: var(--ios-text-primary);
+  border: 1px solid var(--card-border);
+}
+
+/* ============================================================
+   组件层 (@layer components) - 针对既有类名无损换肤
+   ============================================================ */
+@layer components {
+  /* ------------------- 顶栏 (macOS Header & 窗口停靠区) ------------------- */
+  .topbar {
+    @apply flex-none flex items-center justify-between gap-2 sm:gap-3 px-3 sm:px-4;
+    position: relative;
+    z-index: 40;
+    height: calc(var(--topbar-h) + var(--safe-top));
+    min-height: calc(var(--topbar-h) + var(--safe-top));
+    padding-top: var(--safe-top);
+    padding-left: calc(0.75rem + var(--safe-left));
+    padding-right: calc(0.75rem + var(--safe-right));
+    background: var(--topbar-bg);
+    backdrop-filter: blur(24px) saturate(1.8);
+    -webkit-backdrop-filter: blur(24px) saturate(1.8);
+    border-bottom: 1px solid var(--ios-separator);
+    box-sizing: border-box;
+    transition: background-color 0.2s ease, border-color 0.2s ease;
+  }
+
+  .brand {
+    @apply flex items-center gap-1.5 sm:gap-2 min-w-0 select-none;
+  }
+
+  .brand strong {
+    @apply text-[14px] sm:text-[15px] font-semibold tracking-normal truncate;
+    color: var(--ios-text-primary);
+  }
+
+  .dot {
+    @apply w-2 h-2 rounded-full bg-blue-500 shadow-[0_0_8px_rgba(0,122,255,0.6)] flex-none;
+  }
+
+  /* 品牌 logo：2026-10-05 起为圆角方形头像（原为横排中文艺术字横幅）。
+     显式写死 width/height 而非 width:auto —— 素材已换、宽高比从 2.5:1 变 1:1，
+     再走 auto 会让顶栏尺寸随素材浮动，不自洽。 */
+  .brand-logo {
+    height: 22px;
+    width: 22px;
+    object-fit: contain;
+    flex-shrink: 0;
+    vertical-align: middle;
+  }
+
+  .topbar-actions {
+    @apply flex items-center gap-1.5 sm:gap-2 flex-none;
+  }
+
+  /* 移动端顶栏常驻当前会话胶囊（移动端 side-foot 隐藏时的身份事实源） */
+  .topbar-session {
+    @apply text-[12px] px-3 rounded-full font-medium text-blue-400 bg-blue-500/10 border border-blue-500/20 truncate max-w-[120px] sm:max-w-[220px] select-none inline-flex items-center flex-none;
+    height: 28px;
+    box-sizing: border-box;
+  }
+
+  /* 【2026-10-05 修】窄屏（手机）一律不显示顶栏会话胶囊。
+     顶栏在 <640px 要同时塞下：品牌 + 会话胶囊("空桜 @ 肉桂树魔(#9)" ≈ 150px)
+     + 连接状态 + 更换账号，4 件东西抢一行必然横向溢出 —— 胶囊被截成"超出
+     边框的蓝色块"，观感上就是"框超出来了"。身份信息在窄屏有更好的去处：
+     「信息展示」分区的角色卡（头像 / 昵称 / 区服 / 战力）本来就是它的主场。
+     桌面端 (>=640px) 空间充裕，保留胶囊 —— 那里它是"当前挂在哪个服"的
+     唯一常驻指示。 */
+  @media (max-width: 639px) {
+    .topbar-session {
+      display: none;
+    }
+  }
+
+  /* 【2026-10-06 改版】顶栏「切换账号」：改为与下方分区导航 .tab 同族的简约形态 ——
+     透明底 + 无边框 + 圆角胶囊 + ⇄ 双向箭头图标，靠 hover / active 给反馈，
+     而不是靠一整块底色。原来是一枚灰色实心胶囊（.topbar-logout），已被本类取代。
+     ⚠️ 尺寸一律固定 px：安卓 WebView 会按系统字体放大根字号（实测 ×1.33），
+     走 rem 会让按钮在机型之间大小漂移。 */
+  .topbar-switch {
+    @apply inline-flex items-center justify-center gap-1.5 flex-none select-none cursor-pointer whitespace-nowrap;
+    height: 32px;
+    padding: 0 10px;
+    box-sizing: border-box;
+    font-size: 13px;
+    font-weight: 500;
+    border-radius: 999px;
+    color: var(--tab-text);
+    background: transparent;
+    border: 1px solid transparent;
+    transition: color 0.15s ease, background-color 0.15s ease, transform 0.1s ease;
+  }
+  .topbar-switch-icon {
+    width: 16px;
+    height: 16px;
+    flex: none;
+  }
+  /* ⚠️ hover 必须包在 (hover: hover) 里：触屏上点按后 hover 会「粘住」，
+     按钮会一直保持高亮（底坞把手踩过同一个坑）。触屏的反馈交给 :active。 */
+  @media (hover: hover) {
+    .topbar-switch:hover {
+      color: var(--tab-text-hover);
+      background-color: var(--tab-hover-bg);
+    }
+  }
+  .topbar-switch:active {
+    transform: scale(0.95);
+  }
+
+  /* PC 窗口自绘控制按钮 (main_gui.py 注入到 #win-dock；移动端及默认隐藏) */
+  .win-dock {
+    display: none;
+    align-items: center;
+    margin-left: 0.5rem;
+    padding-left: 0.75rem;
+    border-left: 1px solid var(--ios-separator);
+    flex: none;
+  }
+  .win-dock:has(#win-controls) {
+    display: flex;
+  }
+  @media (max-width: 899px) {
+    .win-dock {
+      display: none !important;
+    }
+  }
+
+  #win-controls {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .iconbtn,
+  .win-btn {
+    width: 28px;
+    height: 28px;
+    min-width: 28px;
+    min-height: 28px;
+    padding: 0;
+    border-radius: 7px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    user-select: none;
+    background-color: var(--win-btn-bg);
+    border: 1px solid var(--win-btn-border);
+    color: var(--win-btn-color);
+    transition: all 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+    box-sizing: border-box;
+  }
+  .win-btn svg {
+    display: block;
+    pointer-events: none;
+    transition: transform 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .win-btn:hover {
+    background-color: var(--win-btn-hover-bg);
+    color: var(--win-btn-hover-color);
+    border-color: var(--card-border-hover);
+    transform: scale(1.05);
+  }
+  .win-btn:hover svg {
+    transform: scale(1.08);
+  }
+  .win-btn:active,
+  .win-btn--active-anim {
+    transform: scale(0.92) !important;
+    transition-duration: 0.1s !important;
+  }
+  .win-btn--close:hover {
+    background-color: #ef4444 !important;
+    border-color: #dc2626 !important;
+    color: #ffffff !important;
+    box-shadow: 0 2px 10px rgba(239, 68, 68, 0.4) !important;
+  }
+  .win-btn--close:active {
+    background-color: #dc2626 !important;
+    transform: scale(0.92) !important;
+  }
+
+  /* ------------------- 连接状态点 (2026-10-06 改版) -------------------
+     从「文字胶囊」退化成「纯色圆点」：不再显示"已连接 / 连接中…"，只看颜色判断。
+       灰         = 正在连接（慢呼吸）
+       绿（静态）  = 连接成功
+       绿（呼吸）  = 任务运行中
+       红         = 连接失败
+     语义统一为「呼吸 = 正在做事」，所以灰点与绿点的呼吸不会互相混淆 ——
+     要分清"在连"还是"在跑"，看颜色即可。
+     ⚠️ 圆点用固定 px（9px）不用 rem：安卓 WebView 按系统字体放大根字号
+        （实测 ×1.33），rem 会让点在机型之间大小漂移。
+     ⚠️ 状态判定**不只有颜色**：页面上还挂着 data-state 与 title/aria-label
+        （见 index.html::#conn），色盲用户与读屏仍有非视觉兜底。 */
+  .conn {
+    display: inline-block;
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    flex: none;
+    box-sizing: border-box;
+    background-color: currentColor;
+  }
+  .conn--ok {
+    color: var(--ios-green);
+  }
+  .conn--wait {
+    color: var(--ios-text-secondary);
+    animation: conn-breathe 1.6s ease-in-out infinite;
+  }
+  .conn--bad {
+    color: var(--ios-red);
+  }
+  /* 绿点呼吸 = 任务运行中（静息时的绿点不呼吸，两者一眼可分） */
+  .conn--busy {
+    color: var(--ios-green);
+    animation: conn-breathe 1.1s ease-in-out infinite;
+  }
+  @keyframes conn-breathe {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+  }
+  /* 系统开了「减弱动态效果」→ 退回静态点，不硬塞动画 */
+  @media (prefers-reduced-motion: reduce) {
+    .conn--wait,
+    .conn--busy {
+      animation: none;
+      opacity: 1;
+    }
+  }
+
+  /* ------------------- 框架与侧边栏 (macOS SplitView Sidebar) ------------------- */
+  .shell {
+    flex: 1 1 0%;
+    min-height: 0;
+    height: calc(100dvh - var(--topbar-h) - var(--safe-top));
+    display: grid;
+    grid-template-columns: 220px minmax(0, 1fr);
+    overflow: hidden;
+  }
+
+  .sidebar {
+    @apply flex flex-col gap-2 p-3 z-20;
+    height: 100%;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    background: var(--sidebar-bg);
+    backdrop-filter: blur(24px) saturate(1.8);
+    -webkit-backdrop-filter: blur(24px) saturate(1.8);
+    border-right: 1px solid var(--ios-separator);
+    box-sizing: border-box;
+    transition: background-color 0.2s ease, border-color 0.2s ease;
+  }
+
+  .tabs {
+    @apply flex flex-col gap-1 w-full;
+  }
+
+  .tab {
+    @apply flex items-center gap-2.5 w-full min-h-[38px] px-3 py-1.5 rounded-xl text-[13px] font-medium transition-all text-left cursor-pointer select-none;
+    color: var(--tab-text);
+    background: transparent;
+    border: 1px solid transparent;
+  }
+  .tab:hover {
+    color: var(--tab-text-hover);
+    background-color: var(--tab-hover-bg);
+  }
+  .tab--on {
+    color: var(--tab-active-text) !important;
+    background-color: var(--tab-active-bg) !important;
+    border-color: var(--tab-active-border);
+    box-shadow: var(--tab-active-shadow);
+    font-weight: 600 !important;
+  }
+  .tab--on:hover {
+    background-color: var(--tab-active-bg) !important;
+  }
+  .tab--on span {
+    transform: scale(1.02);
+    transform-origin: left center;
+  }
+  .tab-icon-svg {
+    width: 18px;
+    height: 18px;
+    flex-shrink: 0;
+    stroke: currentColor;
+    fill: none;
+    transition: transform 0.18s cubic-bezier(0.16, 1, 0.3, 1), stroke-width 0.18s;
+  }
+  .tab--on .tab-icon-svg {
+    stroke-width: 2.1;
+    transform: scale(1.08);
+  }
+  .tab-icon-img {
+    width: 18px;
+    height: 18px;
+    object-fit: contain;
+    flex-shrink: 0;
+  }
+
+  .side-foot {
+    @apply mt-auto pt-3 border-t text-[11px] leading-normal;
+    border-color: var(--ios-separator);
+    color: var(--ios-text-tertiary);
+  }
+
+  /* ------------------- 内容主区域 (PC 大屏自适应) ------------------- */
+  .content {
+    @apply p-3 sm:p-6 lg:p-7 grid gap-4 content-start w-full;
+    height: 100%;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    scroll-behavior: smooth;
+    -webkit-overflow-scrolling: touch;
+    box-sizing: border-box;
+    padding-bottom: calc(2.5rem + var(--safe-bottom));
+    padding-left: calc(0.75rem + var(--safe-left));
+    padding-right: calc(0.75rem + var(--safe-right));
+  }
+
+  /* ------------------- 卡片体系 (iOS Inset Grouped) ------------------- */
+  .card {
+    @apply rounded-2xl p-4 sm:p-5 grid gap-3 backdrop-blur-sm transition-all;
+    background-color: var(--card-bg);
+    border: 1px solid var(--card-border);
+    box-shadow: var(--card-shadow);
+    color: var(--ios-text-primary);
+    min-width: 0;
+    max-width: 100%;
+    box-sizing: border-box;
+  }
+  .card:hover {
+    border-color: var(--card-border-hover);
+  }
+  .card--flush {
+    @apply p-0 overflow-hidden;
+  }
+  .card--flush .card-title {
+    @apply px-4 pt-4 pb-2;
+  }
+
+  .card-title {
+    @apply flex items-center justify-between gap-2 text-[15px] font-semibold tracking-normal m-0;
+    color: var(--ios-text-primary);
+  }
+
+  .panel {
+    @apply grid gap-3.5;
+  }
+
+  .panel-hint {
+    @apply text-[12px] p-3 rounded-2xl leading-relaxed;
+    color: var(--ios-text-secondary);
+    background-color: var(--card-bg);
+    border: 1px solid var(--card-border);
+  }
+
+  /* ------------------- 信息看板布局 ------------------- */
+  .info-topbar {
+    @apply flex items-center justify-between gap-3 px-1 py-1;
+  }
+  .info-topbar-left {
+    @apply flex flex-wrap items-baseline gap-2.5 min-w-0;
+  }
+  .info-topbar-title {
+    @apply text-[15px] font-semibold tracking-normal;
+    color: var(--ios-text-primary);
+  }
+  .info-updated {
+    @apply text-[12px] font-normal;
+    color: var(--ios-text-secondary);
+  }
+  .info-dashboard {
+    @apply flex flex-col gap-3.5 w-full;
+  }
+
+  /* ------------------- 玩家名片 Hero Card ------------------- */
+  .hero-player-card {
+    @apply flex flex-col sm:flex-row sm:items-center justify-between gap-3.5 p-4 sm:p-5 rounded-2xl relative overflow-hidden backdrop-blur-md transition-all;
+    border: 1px solid var(--card-border);
+    background: linear-gradient(135deg, rgba(23, 37, 84, 0.35) 0%, rgba(24, 24, 27, 0.85) 50%, rgba(59, 7, 100, 0.35) 100%);
+    box-shadow: var(--card-shadow);
+  }
+  [data-theme="light"] .hero-player-card {
+    background: linear-gradient(135deg, #ffffff 0%, #f4f8ff 50%, #faf5ff 100%);
+    border: 1px solid rgba(0, 0, 0, 0.08);
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.04);
+  }
+  .hero-player-card::before {
+    content: "";
+    @apply absolute -left-10 -top-10 w-36 h-36 rounded-full bg-blue-500/10 blur-2xl pointer-events-none;
+  }
+  .hero-player-identity {
+    @apply flex items-center gap-3.5 min-w-0 z-10;
+  }
+  .hero-avatar {
+    @apply w-12 h-12 rounded-2xl p-1.5 flex items-center justify-center flex-none shadow-md overflow-hidden;
+    background-color: var(--card-bg);
+    border: 1px solid var(--card-border);
+  }
+  .hero-avatar img {
+    @apply w-full h-full object-contain;
+    filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.25));
+  }
+  .hero-names {
+    @apply flex flex-col gap-1 min-w-0;
+  }
+  .hero-player-name {
+    @apply text-[17px] sm:text-[19px] font-bold tracking-tight truncate;
+    color: var(--ios-text-primary);
+  }
+  .hero-tags {
+    @apply flex flex-wrap items-center gap-1.5;
+  }
+  .hero-tag {
+    @apply inline-flex items-center gap-1.5 text-[11px] font-medium px-2.5 py-0.5 rounded-full;
+    background-color: var(--btn-default-bg);
+    color: var(--ios-text-secondary);
+    border: 1px solid var(--card-border);
+  }
+  .hero-tag img {
+    @apply w-3.5 h-3.5 object-contain flex-none;
+  }
+  .hero-power-box {
+    @apply flex items-center sm:flex-col sm:items-end justify-between sm:justify-center gap-1 px-3.5 py-2 sm:p-0 rounded-xl bg-purple-500/10 sm:bg-transparent border border-purple-500/20 sm:border-0 z-10;
+  }
+  .hero-power-label {
+    @apply text-[11px] font-medium flex items-center gap-1;
+    color: var(--ios-text-secondary);
+  }
+  .hero-power-val {
+    @apply text-[20px] sm:text-[24px] font-bold tracking-tight;
+    font-variant-numeric: tabular-nums;
+    color: rgb(216, 180, 254);
+    text-shadow: 0 0 16px rgba(175, 82, 222, 0.4);
+  }
+  [data-theme="light"] .hero-power-val {
+    color: #7c3aed;
+    text-shadow: none;
+  }
+
+  /* 分组标题 */
+  .stat-group-title {
+    @apply text-[12px] font-semibold uppercase tracking-wider px-1 pt-2 pb-0.5 flex items-center gap-2;
+    color: var(--ios-text-secondary);
+  }
+  .stat-group-title::after {
+    content: "";
+    @apply flex-1 h-px;
+    background-color: var(--ios-separator);
+  }
+  /* 分组标题行：标题 + 右侧「展开/收起」小按钮（2026-10-06）。
+     没有按钮时（绝大多数分组）就是一个只有标题的 flex 行，视觉与原来一致。 */
+  .stat-group-head {
+    @apply flex items-center gap-2 min-w-0;
+  }
+  .stat-group-head .stat-group-title {
+    @apply flex-1 min-w-0;
+  }
+  /* 「我的角色」折叠开关：名册是全量角色，几十上百条，默认只铺一屏。
+     做成胶囊小按钮而不是实心按钮 —— 它是版面的附属操作，不该和
+     顶部的「刷新」抢注意力。 */
+  .stat-group-toggle {
+    @apply flex-none text-[11px] leading-none px-2 py-1 rounded-full transition-all;
+    background-color: var(--btn-default-bg);
+    color: var(--ios-text-secondary);
+    border: 1px solid var(--card-border);
+  }
+  .stat-group-toggle:hover {
+    background-color: var(--btn-default-hover);
+    color: var(--ios-text-primary);
+  }
+
+  /* ------------------- 数据指标看板 (Cupertino Stats on PC) ------------------- */
+  .stat-grid {
+    @apply grid gap-2.5 grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6;
+  }
+  .stat-grid--assets {
+    @apply grid-cols-1 sm:grid-cols-3;
+  }
+  .stat-grid--daily {
+    @apply grid-cols-2 md:grid-cols-4;
+  }
+  .stat-grid--progress {
+    @apply grid-cols-1 sm:grid-cols-2;
+  }
+  /* 角色（英雄）网格：条目比 stat 卡片小得多，密度高一些，
+     一屏能看到十来个角色（2026-10-05 新增「我的角色」分组）。 */
+  .stat-grid--roles {
+    @apply grid gap-2 grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-6;
+  }
+
+  /*
+   * 角色卡：左边小头像 + 右边两行文字（名字 / Lv·★）。
+   * 用 grid 两列（auto = 头像宽度）而不用 flow 布局，是为了让"名字两行"
+   * 与头像**顶端对齐**，且头像列宽恒定 —— 否则名字长短会让头像左右跳。
+   */
+  .role-chip {
+    @apply rounded-xl px-2.5 py-2 grid gap-x-2 gap-y-0.5 items-center min-w-0 transition-all;
+    grid-template-columns: auto minmax(0, 1fr);
+    background-color: var(--stat-bg);
+    border: 1px solid var(--card-border);
+  }
+  .role-chip:hover {
+    background-color: var(--stat-hover-bg);
+    border-color: var(--card-border-hover);
+    transform: translateY(-1px);
+  }
+  /* 头像：跨两行（row-span-2）与右侧文字块等高，避免卡片被撑高 */
+  .role-chip-avatar {
+    @apply row-span-2 rounded-lg shrink-0;
+    width: 34px;
+    height: 34px;
+    object-fit: cover;
+    background-color: var(--stat-bg);
+  }
+  .role-chip-name {
+    @apply text-[13px] font-medium truncate;
+    color: var(--ios-text-primary);
+  }
+  .role-chip-meta {
+    @apply text-[11px];
+    color: var(--ios-text-secondary);
+  }
+
+  .stat {
+    @apply rounded-2xl p-3.5 grid gap-1 min-h-[78px] transition-all;
+    background-color: var(--stat-bg);
+    border: 1px solid var(--card-border);
+    box-shadow: var(--card-shadow);
+  }
+  .stat:hover {
+    background-color: var(--stat-hover-bg);
+    border-color: var(--card-border-hover);
+    transform: translateY(-2px);
+  }
+  .stat--asset {
+    @apply min-h-[86px] sm:min-h-[94px] p-4;
+  }
+  .stat--asset .stat-value {
+    @apply text-[22px] sm:text-[26px] font-bold;
+  }
+  .stat-label {
+    @apply text-[12px] font-medium flex items-center gap-1.5;
+    color: var(--ios-text-secondary);
+  }
+  .stat-icon {
+    @apply text-sm leading-none;
+  }
+  .stat-icon-img {
+    width: 20px;
+    height: 20px;
+    object-fit: contain;
+    flex-shrink: 0;
+    vertical-align: middle;
+    filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.25));
+  }
+  .stat-value {
+    font-family: "OPPO Sans", "OPPOSans", system-ui, -apple-system, "Segoe UI Variable Display", "Segoe UI", Roboto, "PingFang SC", "HarmonyOS Sans SC", "MiSans", "Noto Sans CJK SC", "Microsoft YaHei UI", sans-serif;
+    @apply text-[17px] sm:text-[20px] font-semibold;
+    color: var(--ios-text-primary);
+    font-variant-numeric: tabular-nums;
+  }
+  .stat-hint {
+    @apply text-[11px] leading-tight;
+    color: var(--ios-text-tertiary);
+  }
+
+  /* 专属指标色彩映射（深色模式） */
+  .stat--gold .stat-value { @apply text-amber-300; }
+  .stat--gold { @apply bg-amber-500/[0.04] border-amber-500/10; }
+  .stat--diamond .stat-value { @apply text-cyan-300; }
+  .stat--diamond { @apply bg-cyan-500/[0.04] border-cyan-500/10; }
+  .stat--stamina .stat-value { @apply text-emerald-300; }
+  .stat--stamina { @apply bg-emerald-500/[0.04] border-emerald-500/10; }
+  .stat--power .stat-value { @apply text-purple-300; }
+  .stat--power { @apply bg-purple-500/[0.04] border-purple-500/10; }
+
+  /* 专属指标色彩映射（浅色模式） */
+  [data-theme="light"] .stat--gold .stat-value { color: #b45309; }
+  [data-theme="light"] .stat--gold { background-color: #ffffff; border-color: rgba(245, 158, 11, 0.2); }
+  [data-theme="light"] .stat--diamond .stat-value { color: #0284c7; }
+  [data-theme="light"] .stat--diamond { background-color: #ffffff; border-color: rgba(6, 182, 212, 0.2); }
+  [data-theme="light"] .stat--stamina .stat-value { color: #059669; }
+  [data-theme="light"] .stat--stamina { background-color: #ffffff; border-color: rgba(16, 185, 129, 0.2); }
+  [data-theme="light"] .stat--power .stat-value { color: #7c3aed; }
+  [data-theme="light"] .stat--power { background-color: #ffffff; border-color: rgba(168, 85, 247, 0.2); }
+
+  /* ------------------- iOS 原生 Toggle 开关 ------------------- */
+  input[type="checkbox"].toggle,
+  .switch > input[type="checkbox"] {
+    @apply appearance-none w-[46px] h-[26px] m-0 p-0 flex-none rounded-full cursor-pointer relative transition-colors duration-200 border-0 outline-none;
+    background-color: #39393d;
+  }
+
+  input[type="checkbox"].toggle::after,
+  .switch > input[type="checkbox"]::after {
+    content: "";
+    @apply absolute top-[2px] left-[2px] w-[22px] h-[22px] rounded-full bg-white transition-transform duration-200;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
+  }
+
+  input[type="checkbox"].toggle:checked,
+  .switch > input[type="checkbox"]:checked {
+    background-color: #34c759;
+  }
+
+  input[type="checkbox"].toggle:checked::after,
+  .switch > input[type="checkbox"]:checked::after {
+    transform: translateX(20px);
+  }
+
+  input[type="checkbox"].toggle:disabled,
+  .switch > input[type="checkbox"]:disabled {
+    @apply opacity-35 cursor-not-allowed;
+  }
+
+  /* 危险总闸 */
+  .switch--danger > input[type="checkbox"]:checked {
+    background-color: #ff3b30;
+  }
+  .switch--danger {
+    @apply bg-rose-500/10 border border-rose-500/20 p-2.5 rounded-2xl;
+  }
+  .switch--danger strong {
+    @apply text-rose-400;
+  }
+
+  .switch {
+    @apply flex items-center justify-between gap-3 p-2 rounded-xl cursor-pointer hover:bg-white/5 transition-colors;
+  }
+  .switch > span {
+    @apply flex-1 min-w-0 text-left;
+  }
+  .switch strong {
+    /* 【2026-10-05 修】原为 text-white 硬编码，浅色主题下卡是白底 → 标题隐形
+       （「日志记录」分区里「底部运行日志坞」标题消失的根因）。
+       改用主题变量：浅色为深色字，暗夜仍为白字。 */
+    @apply block text-[13px] font-medium;
+    color: var(--ios-text-primary);
+  }
+  .switch em {
+    @apply block text-[12px] not-italic mt-0.5;
+    color: var(--ios-text-secondary, #a1a1aa);
+  }
+
+  .switch--inline {
+    @apply items-center p-0 min-h-[38px] gap-2;
+  }
+  .switch--inline input {
+    @apply m-0;
+  }
+  .switch--inline span {
+    @apply text-[12px] text-zinc-400;
+  }
+
+  /* ------------------- 按钮 (iOS Buttons) ------------------- */
+  .btn {
+    @apply min-h-[38px] px-3.5 py-1.5 rounded-xl text-[13px] font-medium active:scale-[0.98] transition-all inline-flex items-center justify-center gap-1.5 cursor-pointer select-none;
+    background-color: var(--btn-default-bg);
+    color: var(--btn-default-text);
+    border: 1px solid var(--card-border);
+  }
+  .btn:hover {
+    background-color: var(--btn-default-hover);
+    color: var(--ios-text-primary);
+  }
+  .btn--primary {
+    @apply font-medium border-transparent text-white;
+    background-color: var(--ios-blue);
+    box-shadow: 0 2px 8px rgba(0, 122, 255, 0.3);
+  }
+  .btn--primary:hover {
+    background-color: #0a84ff;
+  }
+  .btn--platform {
+    @apply bg-blue-500/20 text-blue-400 hover:bg-blue-500/30 border-blue-500/30;
+  }
+  .btn--compact {
+    @apply min-h-[30px] px-2.5 py-0.5 text-[12px] rounded-lg;
+  }
+  /* 次级工具按钮（展开栏里的「更新区域」/「刷新进度」）：实体按钮款式但不抢主按钮风头 */
+  .btn--ghost {
+    @apply min-h-[30px] px-2.5 py-0.5 text-[12px] rounded-lg transition-all;
+    background-color: var(--btn-default-bg);
+    color: var(--ios-text-secondary);
+    border: 1px solid var(--card-border);
+  }
+  .btn--ghost:hover {
+    background-color: var(--btn-default-hover);
+    color: var(--ios-text-primary);
+  }
+  .btn:disabled {
+    @apply opacity-35 cursor-not-allowed active:scale-100;
+  }
+
+  .linkbtn {
+    @apply text-[12px] text-blue-400 hover:text-blue-300 hover:underline cursor-pointer bg-transparent border-0 p-1 transition-colors select-none;
+  }
+
+  /* ------------------- 任务条目 (PC 大屏双列自适应排版) ------------------- */
+  .tasks {
+    @apply grid gap-2.5 grid-cols-1 xl:grid-cols-2;
+  }
+
+  .task {
+    @apply rounded-2xl p-3.5 grid gap-2.5 transition-all;
+    background-color: var(--task-bg);
+    border: 1px solid var(--card-border);
+    box-shadow: var(--card-shadow);
+  }
+  .task:hover {
+    border-color: var(--card-border-hover);
+  }
+  .task--on {
+    background-color: var(--task-on-bg);
+    border-color: var(--card-border-hover);
+  }
+  .task--off {
+    @apply opacity-50;
+  }
+  /* 展开的复杂任务自动跨双列铺展，让参数表单拥有更宽敞的填写空间 */
+  .task--expanded {
+    @apply xl:col-span-2;
+    background-color: var(--task-expanded-bg);
+    border-color: var(--card-border-hover);
+  }
+
+  .task-head {
+    @apply flex items-center justify-between gap-3;
+  }
+  .task-head--manual {
+    @apply cursor-pointer transition-colors;
+  }
+  .task-head--manual:hover .task-title {
+    color: var(--ios-text-primary);
+  }
+  .task-head--flip {
+    @apply flex items-center justify-between gap-3;
+  }
+
+  .task-actions {
+    @apply flex items-center gap-2 flex-none;
+  }
+  .task-auto-exec {
+    @apply min-h-[26px] h-[26px] px-2.5 text-[12px] font-medium rounded-lg transition-all inline-flex items-center justify-center cursor-pointer select-none disabled:opacity-35 disabled:cursor-not-allowed;
+    background-color: var(--btn-default-bg);
+    color: var(--ios-text-primary);
+    border: 1px solid var(--card-border);
+  }
+  .task-auto-exec:hover {
+    background-color: var(--btn-default-hover);
+    color: var(--ios-text-primary);
+  }
+
+  .task-info {
+    @apply flex-1 min-w-0;
+  }
+  .task-title {
+    @apply flex flex-wrap items-center gap-2 text-[14px] font-semibold transition-colors;
+    color: var(--ios-text-primary);
+  }
+  .task-icon-img {
+    width: 26px;
+    height: 26px;
+    object-fit: contain;
+    flex-shrink: 0;
+    border-radius: 6px;
+    background: rgba(125, 125, 125, 0.08);
+    padding: 2px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+  }
+  .star-icon-img {
+    width: 16px;
+    height: 16px;
+    object-fit: contain;
+    vertical-align: middle;
+    display: inline-block;
+  }
+  .task-sub {
+    @apply text-[12px] m-0 mt-0.5 leading-normal;
+    color: var(--ios-text-secondary);
+  }
+  .task-note {
+    @apply text-[12px] m-0 mt-1;
+    color: var(--ios-text-secondary);
+  }
+
+  .task-toggle {
+    @apply w-8 h-8 rounded-xl flex items-center justify-center text-[13px] cursor-pointer transition-all flex-none select-none active:scale-95;
+    background-color: var(--btn-default-bg);
+    color: var(--ios-text-secondary);
+    border: 1px solid var(--card-border);
+  }
+  .task-toggle:hover {
+    background-color: var(--btn-default-hover);
+    color: var(--ios-text-primary);
+  }
+  .task-toggle[aria-expanded="true"] {
+    @apply rotate-90;
+    background-color: var(--btn-default-hover);
+    color: var(--ios-text-primary);
+    border-color: var(--card-border-hover);
+  }
+
+  .task-params {
+    @apply grid gap-2.5 pt-2.5 mt-1 border-t;
+    border-color: var(--ios-separator);
+  }
+
+  .task-exec {
+    @apply w-full mt-1.5;
+  }
+
+  /* ★ 2026-10-04：执行中该按钮变成「停止执行」—— 用红色描边把它与
+     「执行」明确区分开：那两个状态点下去的结果完全相反，不能只靠文字。 */
+  .task-stop {
+    background-color: rgba(255, 59, 48, 0.12) !important;
+    color: var(--ios-red) !important;
+    border: 1px solid rgba(255, 59, 48, 0.45) !important;
+  }
+  .task-stop:hover {
+    background-color: rgba(255, 59, 48, 0.2) !important;
+    color: var(--ios-red) !important;
+  }
+
+  /* ---------------- 宴席双按钮面板（★ 2026-10-05：早宴席 / 晚宴席） ----------------
+     一天两顿、一个包一个按钮：每块面板 = 标题行（顿名 + 邀请开关）+ 大按钮 + 状态注。
+     六态配色（2026-10-06 第七版加了 gap / makeup）：
+     ready=绿（可点）、makeup=绿（**补吃**，可点但不可邀请）、eaten/gap=灰（吃过 / 空档）、
+     not_started/expired=橙（时间不对）、unknown=默认（还没联网读到时段，允许点，后端仍会把关）。 */
+  .bbq-meals {
+    @apply grid gap-2.5 pt-2.5 mt-1 border-t;
+    border-color: var(--ios-separator);
+  }
+  .bbq-meals-head {
+    @apply flex items-center justify-between gap-2;
+  }
+  .bbq-meals-day {
+    @apply text-[11px];
+    color: var(--ios-text-secondary);
+  }
+  .bbq-refresh {
+    @apply text-[11px] px-2 py-1;
+  }
+  .bbq-meals-grid {
+    @apply grid grid-cols-2 gap-2.5;
+  }
+  .bbq-meal {
+    @apply grid gap-2 p-2.5 rounded-xl;
+    background-color: var(--ios-surface-2);
+    border: 1px solid var(--ios-separator);
+  }
+  .bbq-meal-top {
+    @apply flex items-center justify-between gap-2;
+  }
+  .bbq-meal-name {
+    @apply text-[13px] font-semibold;
+    color: var(--ios-text-primary);
+  }
+  .bbq-meal--eaten .bbq-meal-name,
+  .bbq-meal--gap .bbq-meal-name,
+  .bbq-meal--expired .bbq-meal-name,
+  .bbq-meal--not_started .bbq-meal-name {
+    color: var(--ios-text-tertiary);
+  }
+  .bbq-meal-invite {
+    @apply flex items-center gap-1.5 text-[11px] cursor-pointer;
+    color: var(--ios-text-secondary);
+  }
+  /* ★ 2026-10-06：窗口外邀请开关**直接变灰不可操作**（用户要求"让用户直观知道
+     这条路被强制屏蔽"）—— 不是"能点但点了没反应"。后端还有一道闸门兜底。 */
+  .bbq-meal-invite--locked {
+    color: var(--ios-text-tertiary);
+    cursor: not-allowed;
+  }
+  .bbq-meal-invite--locked .toggle {
+    cursor: not-allowed;
+  }
+  .bbq-meal-invite .toggle {
+    /* 开关比通用的略小：它是从属选项，不能比主按钮更显眼 */
+    transform: scale(0.8);
+    transform-origin: right center;
+  }
+  .bbq-meal-btn {
+    @apply w-full text-[13px] font-semibold;
+  }
+  /* 各态配色：颜色语义与「task-stop 用红、成功用绿」的既有语言一致 */
+  .bbq-meal-btn--ready,
+  .bbq-meal-btn--makeup {
+    /* 补吃同样**可点**（只是不能邀请），所以同为绿色 —— 区别写在按钮文案与状态注里 */
+    background-color: var(--ios-green);
+    color: #ffffff;
+    border: 1px solid transparent;
+  }
+  .bbq-meal-btn--eaten,
+  .bbq-meal-btn--gap {
+    background-color: var(--ios-surface-3);
+    color: var(--ios-text-tertiary);
+    border: 1px solid var(--ios-separator);
+  }
+  .bbq-meal-btn--not_started,
+  .bbq-meal-btn--expired {
+    background-color: rgba(255, 149, 0, 0.14);
+    color: var(--ios-orange);
+    border: 1px solid rgba(255, 149, 0, 0.4);
+  }
+  .bbq-meal-note {
+    @apply text-[11px] not-italic;
+    color: var(--ios-text-tertiary);
+  }
+  .bbq-meal--ready .bbq-meal-note {
+    color: var(--ios-green);
+  }
+  .bbq-meal--makeup .bbq-meal-note,
+  .bbq-meal--not_started .bbq-meal-note,
+  .bbq-meal--expired .bbq-meal-note,
+  .bbq-meal--gap .bbq-meal-note {
+    /* 补吃的注是橙色的：能吃，但要提醒"不能邀请" */
+    color: var(--ios-orange);
+  }
+  /* 手机窄屏：两块面板竖排（并排在 360px 下每个只剩 160px，按钮文字会挤换行） */
+  @media (max-width: 560px) {
+    .bbq-meals-grid {
+      @apply grid-cols-1;
+    }
+  }
+
+  .param {
+    @apply grid gap-1;
+  }
+  .param--bool {
+    @apply grid grid-cols-[minmax(0,1fr)_auto] items-center;
+  }
+  .param--bool .param-hint {
+    @apply col-span-full;
+  }
+  .param label {
+    @apply text-[12px] font-medium;
+    color: var(--ios-text-primary);
+  }
+  .param .param-hint {
+    @apply text-[11px];
+    color: var(--ios-text-secondary);
+  }
+  .param--danger label::after {
+    display: none;
+  }
+  .param-tools {
+    @apply flex items-center gap-2 flex-wrap;
+  }
+
+  /* ---------------- 自定义下拉（★ 2026-10-02：替代原生 <select>） ----------------
+     自绘下拉在 PC 与手机上表现一致：原地展开、点选项生效、点别处收起；
+     底部空间不足时自动向上展开（.custom-select-menu--up）。 */
+  .custom-select {
+    @apply relative min-w-0;
+  }
+  .custom-select-trigger {
+    @apply w-full min-h-[38px] px-3 py-1.5 text-[13px] text-left rounded-xl outline-none
+      transition-all cursor-pointer truncate;
+    background-color: var(--input-bg);
+    border: 1px solid var(--input-border);
+    color: var(--input-text);
+  }
+  .custom-select-trigger:focus-visible {
+    border-color: var(--ios-blue);
+    box-shadow: 0 0 0 2px rgba(0, 122, 255, 0.2);
+  }
+  .custom-select-trigger[aria-expanded="true"] {
+    border-color: var(--ios-blue);
+    background-color: var(--input-bg);
+  }
+  /* 右侧小三角（用伪元素，避免多插一个节点） */
+  .custom-select-trigger::after {
+    content: "";
+    @apply inline-block w-0 h-0 ml-2 align-middle border-x-[5px] border-x-transparent border-t-[6px];
+    border-top-color: var(--ios-text-secondary);
+  }
+  .custom-select--disabled .custom-select-trigger {
+    color: var(--ios-text-tertiary);
+    @apply cursor-not-allowed opacity-70;
+  }
+  .custom-select-menu {
+    @apply absolute left-0 right-0 top-[calc(100%+4px)] z-50 max-h-[240px] overflow-y-auto
+      rounded-xl backdrop-blur-md shadow-2xl p-1;
+    background-color: var(--card-bg);
+    border: 1px solid var(--card-border);
+  }
+  /* 向上展开样式：靠近屏幕底部时防溢出 */
+  .custom-select-menu--up {
+    top: auto !important;
+    bottom: calc(100% + 4px) !important;
+    box-shadow: 0 -12px 36px rgba(0, 0, 0, 0.15) !important;
+  }
+  .custom-select-option {
+    @apply w-full text-left px-3 py-2 rounded-lg text-[13px]
+      bg-transparent border-0 cursor-pointer transition-colors;
+    color: var(--ios-text-secondary);
+  }
+  .custom-select-option:hover {
+    background-color: var(--tab-hover-bg);
+    color: var(--ios-text-primary);
+  }
+  .custom-select-option--on {
+    @apply text-blue-500 font-medium;
+    background-color: rgba(0, 122, 255, 0.08);
+  }
+  .custom-select-option[aria-disabled="true"] {
+    color: var(--ios-text-tertiary);
+    @apply cursor-not-allowed;
+  }
+  /* 分组标题（★ 2026-10-05）：登录页用它区分"已保存区服角色 / 平台账号"。
+     不可点、不可聚焦，只是视觉分隔条。 */
+  .custom-select-group {
+    @apply px-3 pt-2 pb-1 text-[11px] font-semibold uppercase tracking-wide select-none;
+    color: var(--ios-text-tertiary);
+  }
+  /* 分组标题的细分隔线：与上方选项拉开层次，避免读成"另一个选项" */
+  .custom-select-group + .custom-select-option {
+    margin-top: 0.125rem;
+  }
+
+  /* ---------------- 数字步进器（★ 2026-10-02 需求） ----------------
+     左减号 / 中间可点选手输 / 右加号；提升触控热区（移动端手指更易点准）。 */
+  .stepper {
+    @apply grid grid-cols-[40px_minmax(0,1fr)_40px] items-stretch gap-1.5;
+  }
+  .stepper-btn {
+    @apply min-h-[40px] rounded-xl text-[16px] leading-none flex items-center justify-center cursor-pointer select-none transition-all active:scale-95;
+    background-color: var(--btn-default-bg);
+    border: 1px solid var(--input-border);
+    color: var(--ios-text-primary);
+  }
+  .stepper-btn:hover {
+    background-color: var(--btn-default-hover);
+  }
+  .stepper-input {
+    @apply text-center text-[14px];
+    background-color: var(--input-bg);
+    border: 1px solid var(--input-border);
+    color: var(--input-text);
+  }
+  /* 去掉浏览器自带的上下箭头：步进交给两边的按钮，避免两套控件并存 */
+  .stepper-input::-webkit-outer-spin-button,
+  .stepper-input::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+  .stepper-input {
+    -moz-appearance: textfield;
+    appearance: textfield;
+  }
+
+  /* 自动状态行 */
+  .auto-status {
+    @apply text-[12px] flex items-center gap-1.5 m-0;
+    color: var(--ios-text-secondary);
+  }
+  .auto-status::before {
+    content: "";
+    @apply w-1.5 h-1.5 rounded-full flex-none;
+    background-color: var(--ios-text-secondary);
+  }
+  .auto-status--ok { color: var(--ios-text-secondary); }
+  .auto-status--ok::before { background-color: var(--ios-green); }
+  .auto-status--run { color: var(--ios-text-primary); }
+  .auto-status--run::before { background-color: var(--ios-blue); }
+  .auto-status--warn { color: var(--ios-text-secondary); }
+  .auto-status--warn::before { background-color: var(--ios-blue); }
+
+  /* 徽标 */
+  .badges {
+    @apply flex flex-wrap gap-1;
+  }
+  .badge {
+    @apply text-[11px] font-medium px-2 py-0.5 rounded-full select-none;
+    color: var(--ios-text-secondary);
+    background-color: var(--btn-default-bg);
+    border: 1px solid var(--card-border);
+  }
+  .badge--ok {
+    @apply text-emerald-500 bg-emerald-500/10 border-emerald-500/20;
+  }
+  .badge--warn {
+    color: var(--ios-text-secondary);
+    background-color: var(--btn-default-bg);
+    border: 1px solid var(--card-border);
+  }
+  .badge--danger {
+    @apply text-rose-500 bg-rose-500/10 border-rose-500/20;
+  }
+
+  /* ------------------- 表单与输入框 ------------------- */
+  .field {
+    @apply grid gap-1 min-w-0;
+  }
+  .field label {
+    @apply text-[12px] font-medium;
+    color: var(--ios-text-primary);
+  }
+
+  input[type="text"],
+  input[type="password"],
+  input[type="number"],
+  select {
+    @apply w-full min-h-[38px] px-3 py-1.5 text-[13px] rounded-xl outline-none transition-all;
+    background-color: var(--input-bg);
+    border: 1px solid var(--input-border);
+    color: var(--input-text);
+  }
+  input:focus,
+  select:focus {
+    border-color: var(--ios-blue);
+    box-shadow: 0 0 0 2px rgba(0, 122, 255, 0.2);
+  }
+
+  .row {
+    @apply flex gap-2.5 items-end flex-wrap;
+  }
+
+  /* 折叠面板 details */
+  .details {
+    @apply rounded-xl p-3 grid gap-2;
+    background-color: var(--card-bg);
+    border: 1px solid var(--card-border);
+  }
+  .details > summary {
+    @apply cursor-pointer text-blue-500 text-[12px] list-none flex items-center gap-1.5 select-none font-medium;
+  }
+  .details > summary::-webkit-details-marker {
+    display: none;
+  }
+  .details > summary::before {
+    content: "▸";
+    @apply inline-block transition-transform duration-150;
+  }
+  .details[open] > summary::before {
+    @apply rotate-90;
+  }
+
+  /* 运行进度条 */
+  .progress {
+    @apply list-none m-0 p-0 grid gap-1.5;
+  }
+  .step {
+    @apply flex gap-2.5 items-center p-2 rounded-xl border transition-all;
+    background-color: var(--ios-surface-2);
+    border-color: var(--card-border);
+    color: var(--ios-text-primary);
+  }
+  .step-mark {
+    @apply flex-none w-5 text-center text-[12px];
+  }
+  .step--ok .step-mark { @apply text-emerald-400; }
+  .step--ok .step-mark::before { content: "✔"; }
+  .step--fail .step-mark { @apply text-rose-400; }
+  .step--fail .step-mark::before { content: "✘"; }
+  .step--pending .step-mark { @apply text-zinc-500; }
+  .step--pending .step-mark::before { content: "•"; }
+  /* ★ 2026-10-04：被用户中断而**没有执行**的步骤 —— 它不是失败，
+     所以不用红色，而是中性的灰 + 一个停止记号。 */
+  .step--skipped .step-mark { @apply text-zinc-500; }
+  .step--skipped .step-mark::before { content: "⏹"; }
+  .step--running {
+    @apply border-blue-500/40 bg-blue-500/10;
+  }
+  .step--running .step-mark {
+    @apply text-blue-400 animate-spin;
+  }
+  .step--running .step-mark::before { content: "◔"; }
+  .step-name {
+    @apply font-medium text-[13px];
+    color: var(--ios-text-primary);
+  }
+  .step-msg {
+    @apply text-[12px];
+    color: var(--ios-text-secondary);
+  }
+
+  /* ------------------- 日志与日志坞 (macOS Console on PC) ------------------- */
+  .log-tools {
+    @apply flex items-center gap-2;
+  }
+
+  .log,
+  .log-line,
+  .log-msg,
+  .log-placeholder {
+    font-family: "OPPO Sans", "OPPOSans", system-ui, -apple-system, "Segoe UI Variable Text", "Segoe UI", Roboto, "PingFang SC", "HarmonyOS Sans SC", "MiSans", "Noto Sans CJK SC", "Source Han Sans SC", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif !important;
+    font-style: normal !important;
+  }
+  .log {
+    @apply text-[12.5px] p-3.5 rounded-2xl overflow-y-auto max-h-[380px] leading-relaxed;
+    background-color: var(--input-bg);
+    border: 1px solid var(--input-border);
+    color: var(--ios-text-primary);
+  }
+  .log-line {
+    @apply block py-0.5 px-1 rounded transition-colors;
+  }
+  .log-line:hover {
+    background-color: var(--btn-default-hover);
+  }
+  /* 【2026-10-06】删掉了日志分级配色：.log-line--{USER,INFO,WARNING,ERROR,DEBUG} 与
+     .log-mark--{ok,fail,warn}（用户明确不要）。
+     这批规则本来就是死的：app.js 用模板字符串拼类名（"log-line--" + level），
+     Tailwind JIT 扫不到字面量，所以它们从未进过 styles.css —— 对照 git HEAD 也是空的。
+     现在 app.js 只保留 log-line / log-mark 基类，level 改挂 data-level。 */
+
+  .log--run {
+    @apply max-h-[320px] lg:max-h-[min(560px,calc(100dvh-320px))];
+  }
+  .log-mark { @apply font-semibold; }
+  .log-divider {
+    color: var(--ios-text-tertiary);
+    @apply text-[11px] tracking-wider my-1;
+  }
+  .log-placeholder {
+    color: var(--ios-text-secondary) !important;
+    @apply text-[12.5px] py-2 m-0 not-italic;
+  }
+
+  /* ------------------- 开发者日志保存成功 UI 标 (iOS Minimalist Badge) ------------------- */
+  .devlog-saved-badge {
+    @apply mt-3 p-3 rounded-xl flex flex-col gap-2 transition-all;
+    background-color: var(--ios-surface-2);
+    border: 1px solid rgba(48, 209, 88, 0.3);
+  }
+  [data-theme="light"] .devlog-saved-badge {
+    background-color: rgba(52, 199, 89, 0.08);
+    border: 1px solid rgba(52, 199, 89, 0.28);
+  }
+  .devlog-saved-header {
+    @apply flex items-center justify-between gap-2 flex-wrap;
+  }
+  .devlog-saved-status {
+    @apply flex items-center gap-1.5 text-[13px] font-semibold;
+    color: var(--ios-green);
+  }
+  .devlog-saved-icon {
+    @apply inline-flex items-center justify-center w-4 h-4 rounded-full text-[10px] text-white font-bold leading-none flex-none;
+    background-color: var(--ios-green);
+  }
+  .devlog-saved-actions {
+    @apply flex items-center gap-2;
+  }
+  .devlog-saved-path-wrap {
+    @apply flex items-start gap-1.5 text-[12px] leading-relaxed;
+    color: var(--ios-text-secondary);
+  }
+  .devlog-saved-label {
+    @apply flex-none font-medium pt-0.5;
+  }
+  .devlog-saved-path {
+    @apply flex-1 font-mono text-[11.5px] px-2 py-1 rounded select-all;
+    word-break: break-all;
+    overflow-wrap: anywhere;
+    background-color: var(--input-bg);
+    border: 1px solid var(--input-border);
+    color: var(--ios-text-primary);
+  }
+
+  /* 浮动日志坞（平板/iPadOS 风格悬浮胶囊控制条） */
+  .bottom-log-peek {
+    @apply fixed z-40 h-10 px-3.5 rounded-full text-[12px] font-medium backdrop-blur-xl flex items-center gap-2 cursor-pointer select-none active:scale-95 transition-all duration-200;
+    background-color: var(--card-bg);
+    border: 1px solid var(--card-border);
+    color: var(--ios-text-primary);
+    box-shadow: 0 8px 32px var(--ios-card-shadow);
+    right: calc(1.25rem + var(--safe-right));
+    bottom: calc(1.25rem + var(--safe-bottom));
+  }
+  .bottom-log-peek:hover {
+    border-color: var(--card-border-hover);
+  }
+  .dock-peek-icon {
+    @apply w-4 h-4 flex-shrink-0 transition-transform;
+    color: var(--ios-text-secondary);
+  }
+  .bottom-log-peek:hover .dock-peek-icon {
+    color: var(--ios-text-primary);
+    transform: scale(1.08);
+  }
+  .dock-peek-text {
+    @apply text-[12px] font-medium tracking-wide select-none;
+    color: var(--ios-text-primary);
+  }
+  .dock-badge {
+    @apply min-w-[18px] h-[18px] px-1.5 rounded-full bg-rose-500 text-white text-[10px] font-bold flex items-center justify-center shadow-[0_0_8px_rgba(244,63,94,0.6)];
+  }
+
+  /* 底部运行结果面板：与主界面卡片色调完全一致，不再出现多段杂色 */
+  .bottom-log-dock {
+    @apply fixed z-50 rounded-2xl border shadow-2xl backdrop-blur-xl flex flex-col overflow-hidden pointer-events-none;
+    background-color: var(--card-bg);
+    border-color: var(--card-border);
+    left: calc(0.75rem + var(--safe-left));
+    right: calc(0.75rem + var(--safe-right));
+    bottom: calc(0.5rem + var(--safe-bottom));
+    height: var(--bottom-log-h, 280px);
+    opacity: 0;
+    transform: translateY(calc(100% + 24px));
+    transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.22s ease, visibility 0.3s;
+    visibility: hidden;
+    will-change: transform, opacity;
+  }
+  @media (min-width: 640px) {
+    .bottom-log-dock {
+      left: calc(240px + var(--safe-left));
+      right: calc(1.5rem + var(--safe-right));
+      bottom: calc(1rem + var(--safe-bottom));
+    }
+  }
+  .bottom-log-dock.expanded {
+    opacity: 1;
+    transform: translateY(0);
+    pointer-events: auto;
+    visibility: visible;
+  }
+
+  body.dock-resizing .bottom-log-dock {
+    transition: none !important;
+  }
+
+  body:not(.bottom-log-enabled) .bottom-log-dock {
+    display: none !important;
+  }
+  body:not(.bottom-log-enabled) .bottom-log-peek {
+    display: none !important;
+  }
+
+  /* 底部日志拉伸把手：背景完全透明，融于日志坞整体色调，仅保留居中微小抓手手柄 */
+  .bottom-log-resizer {
+    @apply flex items-center justify-center cursor-ns-resize select-none flex-none;
+    touch-action: none;
+    position: relative;
+    /* 【2026-10-06 修】顶边到标题之间那条留白带太厚（用户："顶边到标题之间太空"）。
+       原来 18px，叠加 head 的 py-2（rem，手机上被系统字体放大到 10px）→ 实测顶边→标题 35px。
+       收到 12px，配合 head 固定 6px 内边距 → 26px。 */
+    height: 12px;
+    background: transparent;
+    padding: 3px 0 1px 0;
+  }
+  /* 视觉只占 12px，但拖拽要好按：用不可见热区向下补足到 18px。
+     只覆盖 head 的 padding-top（6px），不压到标题与「清屏/收起」按钮。 */
+  .bottom-log-resizer::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 0;
+    bottom: -6px;
+  }
+  .bottom-log-resizer::before {
+    content: "";
+    @apply w-10 h-1 rounded-full transition-colors;
+    background-color: var(--ios-separator);
+  }
+  /* 触屏上 :hover 会在点按后"粘住"（把手一直亮蓝）；只在真正支持 hover 的设备上生效 */
+  @media (hover: hover) {
+    .bottom-log-resizer:hover::before {
+      background-color: var(--ios-blue);
+    }
+  }
+  .bottom-log-resizer:active::before {
+    background-color: var(--ios-blue);
+  }
+  .bottom-log-head {
+    /* py-2 是 0.5rem，会跟随系统字体缩放（手机上根字号被撑到 20px → 10px，
+       PC 端受系统 DPI 缩放同理），这正是「顶边到标题太空」的另一半来源。改固定 px，双端一致。 */
+    @apply flex items-center justify-between px-4 flex-none;
+    padding-top: 6px;
+    padding-bottom: 6px;
+    background: transparent;
+    border-bottom: 1px solid var(--ios-separator);
+    color: var(--ios-text-primary);
+  }
+  .bottom-log-head strong {
+    @apply text-[13px] font-semibold tracking-wide;
+    color: var(--ios-text-primary);
+  }
+
+  /* 日志坞内的输出区：透明背景无嵌套边框，与外部面板浑然一体 */
+  .bottom-log-dock .log,
+  .log--dock {
+    @apply rounded-none p-3.5 overflow-y-auto leading-relaxed;
+    background: transparent !important;
+    border: none !important;
+    max-height: none !important;
+    flex: 1 1 0%;
+    color: var(--ios-text-primary);
+  }
+
+  body.dock-resizing {
+    user-select: none !important;
+    -webkit-user-select: none !important;
+    cursor: ns-resize !important;
+  }
+
+  body.bottom-log-enabled:not(.bottom-log-expanded) .content {
+    padding-bottom: calc(64px + var(--safe-bottom));
+  }
+  body.bottom-log-expanded .content {
+    padding-bottom: calc(var(--bottom-log-h, 280px) + 20px + var(--safe-bottom));
+  }
+
+  /* ------------------- 键值列表与关于 ------------------- */
+  .kv {
+    @apply grid gap-x-4 gap-y-2 m-0;
+    grid-template-columns: auto minmax(0, 1fr);
+    min-width: 0;
+  }
+  .kv dt {
+    @apply text-[12px] font-medium whitespace-nowrap;
+    color: var(--ios-text-secondary);
+  }
+  .kv dd {
+    @apply text-[13px] m-0;
+    color: var(--ios-text-primary);
+    word-break: break-all;
+    overflow-wrap: anywhere;
+    min-width: 0;
+  }
+  .bullets {
+    @apply grid gap-1 m-0 pl-4 text-[12px] list-disc leading-normal;
+    color: var(--ios-text-secondary);
+  }
+
+  /* ------------------- 登录与选区门面 (iOS/macOS Modal Sheet) ------------------- */
+  .gate-body {
+    @apply min-h-[100dvh] flex items-center justify-center p-4 sm:p-6;
+    background-color: var(--ios-bg);
+    color: var(--ios-text-primary);
+    padding-top: calc(1rem + var(--safe-top));
+    padding-bottom: calc(1rem + var(--safe-bottom));
+    padding-left: calc(1rem + var(--safe-left));
+    padding-right: calc(1rem + var(--safe-right));
+  }
+  .gate {
+    @apply w-full max-w-[460px] grid gap-3.5;
+    /* 溢出围栏（★ 2026-10-05）：360px 手机视口曾被下拉触发器的
+       一行不换行长文案把网格最小宽度撑爆（整页左右被裁）。
+       minmax(0,1fr) 把轨道最小宽度钉死为 0，长内容只能在自己框内截断。 */
+    grid-template-columns: minmax(0, 1fr);
+  }
+  /* 选区列表在 PC 端可自适应适度拓宽以展示双列 */
+  .gate:has(#gate-server:not(.hidden)) {
+    @apply max-w-[620px];
+  }
+
+  .gate-brand {
+    @apply flex items-center justify-center gap-2 mb-1 text-[17px] font-semibold select-none;
+    color: var(--ios-text-primary);
+  }
+  .gate-brand .brand-logo {
+    height: 30px;
+    width: auto;
+    object-fit: contain;
+    flex-shrink: 0;
+    vertical-align: middle;
+  }
+  /* ★ 2026-10-06：.hero / .hero h1 / .hero p 已删除。
+     它们唯一的使用者（登录页选区步的「选择区服」标题块）被并进了筛选卡，
+     自此全工程再无 class="hero" 的元素 —— 留着就是死代码。
+     注意：index.html 里的 .hero-player-card / .hero-avatar 等是**另一套**
+     （玩家信息卡，见文件上方），与本组无关，不受影响。 */
+
+  /* 选区筛选条：只剩「开关 + 数量汇总」两行，故把 .card 默认的 gap-3 收到 gap-2，
+     让它视觉上更接近一根工具条而不是一张卡片（★ 2026-10-06）。
+     仍用 .card 类以复用表面色/圆角/边框三件套，只是不再撑高度。 */
+  .server-filter {
+    @apply gap-2;
+  }
+  /* 数量汇总紧贴开关下方，左缩进对齐开关文字（iOS 设置行的经典排法） */
+  .server-filter .hint {
+    @apply pl-1;
+  }
+
+  .server-list {
+    @apply grid gap-2 grid-cols-1 sm:grid-cols-2 max-h-[50vh] overflow-y-auto pr-1;
+  }
+  .server-card {
+    @apply w-full text-left p-3 rounded-xl border cursor-pointer transition-all;
+    background-color: var(--card-bg);
+    border-color: var(--card-border);
+  }
+  .server-card:hover {
+    border-color: var(--card-border-hover);
+    background-color: var(--ios-surface-2);
+  }
+  .server-card--on {
+    border-color: rgba(59, 130, 246, 0.5);
+    background-color: rgba(37, 99, 235, 0.12);
+    box-shadow: 0 0 12px rgba(0, 122, 255, 0.15);
+  }
+  .server-name {
+    @apply flex items-center gap-2 text-[13px] font-medium;
+    color: var(--ios-text-primary);
+  }
+  .server-meta {
+    @apply text-[12px] mt-0.5;
+    color: var(--ios-text-secondary);
+  }
+  .sticky-actions {
+    @apply sticky bottom-0 pt-3 pb-1 backdrop-blur-md flex gap-2.5;
+    background-color: var(--topbar-bg);
+    padding-bottom: calc(0.75rem + var(--safe-bottom));
+  }
+  .sticky-actions .btn {
+    @apply flex-1;
+  }
+
+  /* ================================================================
+     登录门面 · 品牌视觉层（2026-10-04）
+     ----------------------------------------------------------------
+     【设计取舍：为什么登录页不做顶栏】
+     主界面（index.html）是"控制台"形态，顶栏 + 侧边栏是它的骨架；
+     但登录页是"门"，任务是让用户 10 秒内做完一件事。
+     所以这里**刻意不复制顶栏**，改为「整屏居中 + 品牌主视觉」：
+        · 视觉重心垂直居中，大屏四周留白本身就是高级感；
+        · 步骤指示条承担顶栏的"我在哪"职责，密度更低；
+        · 背景用极淡径向光晕（6% 透明度），有氛围但不喧宾夺主。
+     窗口三键（— □ ✕）由 main_gui.py 注入到 #win-dock，
+     本页没有 #win-dock，注入脚本会走 position:fixed 兜底贴右上角 —— 
+     正好呼应"无边框纯净"的形态，不做遮挡处理。
+     ================================================================ */
+
+  /* 极淡氛围底：深色在左上打一束蓝紫光，浅色在顶部铺一层冷白
+     （用 background-image 叠加而非替换，保留 var(--ios-bg) 的纯色兜底） */
+  .gate-body {
+    background-image:
+      radial-gradient(120% 78% at 50% -12%, rgba(0, 122, 255, 0.07) 0%, rgba(0, 122, 255, 0) 60%),
+      radial-gradient(90% 60% at 88% 4%, rgba(175, 82, 222, 0.055) 0%, rgba(175, 82, 222, 0) 58%);
+    background-repeat: no-repeat;
+    background-attachment: fixed;
+  }
+  [data-theme="light"] .gate-body {
+    background-image:
+      radial-gradient(120% 78% at 50% -12%, rgba(0, 122, 255, 0.075) 0%, rgba(0, 122, 255, 0) 62%),
+      radial-gradient(90% 60% at 88% 4%, rgba(175, 82, 222, 0.05) 0%, rgba(175, 82, 222, 0) 58%);
+  }
+
+  /* 门面容器：整体居中，但重心略微上提（45%）——
+     完全居中时，多卡片页面会因为下方内容多而显得"坠"，45% 是视觉平衡点 */
+  .gate {
+    align-content: center;
+    justify-items: stretch;
+  }
+  .gate-body {
+    align-items: center;
+  }
+
+  /* ---------------- 品牌主视觉（居中，替代旧 .gate-brand 单行） ---------------- */
+  .gate-hero {
+    @apply grid justify-items-center text-center gap-3;
+    margin-bottom: 0.5rem;
+  }
+  /* logo 光环：外层柔光 + 内层玻璃圆角方形，logo 悬于其中 */
+  .gate-mark {
+    position: relative;
+    display: grid;
+    place-items: center;
+    width: 76px;
+    height: 76px;
+    border-radius: 22px;
+    background-color: var(--card-bg);
+    border: 1px solid var(--card-border);
+    box-shadow:
+      0 10px 30px -8px rgba(0, 122, 255, 0.28),
+      0 2px 8px rgba(0, 0, 0, 0.22),
+      inset 0 1px 0 rgba(255, 255, 255, 0.06);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+  }
+  [data-theme="light"] .gate-mark {
+    box-shadow:
+      0 10px 30px -10px rgba(0, 122, 255, 0.24),
+      0 2px 8px rgba(0, 0, 0, 0.05),
+      inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  }
+  /* 光环：logo 后方的呼吸光斑，极淡，仅在大屏可见 */
+  .gate-mark::before {
+    content: "";
+    position: absolute;
+    inset: -18px;
+    border-radius: 9999px;
+    background: radial-gradient(closest-side, rgba(0, 122, 255, 0.16), rgba(0, 122, 255, 0) 72%);
+    z-index: -1;
+    pointer-events: none;
+  }
+  /* 头像在 76×76 玻璃容器内的边长：52px 留 12px 内边距，视觉饱满但不顶边。
+     （旧横排 logo 是 46px 高、实际只占中间一条，方形头像需要更接近铺满。）
+     注意这里不设 border-radius：素材自带圆角，再加一层会与容器形成三层圆角。 */
+  .gate-mark .brand-logo {
+    height: 52px;
+    width: 52px;
+    object-fit: contain;
+    vertical-align: middle;
+  }
+  .gate-wordmark {
+    @apply grid gap-1 justify-items-center;
+  }
+  .gate-wordmark strong {
+    font-size: 20px;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    color: var(--ios-text-primary);
+  }
+  .gate-wordmark .gate-tagline {
+    font-size: 12px;
+    color: var(--ios-text-secondary);
+  }
+
+  /* ---------------- 步骤指示条（① 登录 → ② 选区） ----------------
+     它承担了顶栏"我在哪"的职责，但密度更低。
+     data-step 由 login.js 的 setGateScreen() 联动切换。 */
+  .gate-steps {
+    @apply flex items-center justify-center gap-2 select-none;
+    margin-top: 0.25rem;
+  }
+  .gate-step {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--ios-text-tertiary);
+    transition: color 0.22s ease;
+  }
+  .gate-step-dot {
+    display: grid;
+    place-items: center;
+    width: 18px;
+    height: 18px;
+    flex: none;
+    border-radius: 9999px;
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 1;
+    color: var(--ios-text-tertiary);
+    background-color: var(--btn-default-bg);
+    border: 1px solid var(--card-border);
+    transition: all 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  /* 连字符 */
+  .gate-step-sep {
+    width: 26px;
+    height: 1px;
+    flex: none;
+    background-color: var(--ios-separator-strong);
+  }
+  /* 已完成：实心浅蓝 */
+  .gate-step--done {
+    color: var(--ios-text-secondary);
+  }
+  .gate-step--done .gate-step-dot {
+    color: #fff;
+    background-color: rgba(0, 122, 255, 0.55);
+    border-color: transparent;
+  }
+  /* 进行中：实心蓝 + 外发光，是整条指示条唯一的强调点 */
+  .gate-step--on {
+    color: var(--ios-text-primary);
+    font-weight: 600;
+  }
+  .gate-step--on .gate-step-dot {
+    color: #fff;
+    background-color: var(--ios-blue);
+    border-color: transparent;
+    box-shadow: 0 0 0 4px rgba(0, 122, 255, 0.16);
+  }
+  [data-theme="light"] .gate-step--on .gate-step-dot {
+    box-shadow: 0 0 0 4px rgba(0, 122, 255, 0.14);
+  }
+
+  /* ---------------- 标题层级强化 ----------------
+     ★ 2026-10-06：本节原有的 .gate .hero / .gate .hero h1 / .gate .hero p
+     三条规则已随「选择区服」标题块的移除而删除（详见 .server-filter 处的说明）。 */
+
+  /* ---------------- 折叠入口换壳（details 结构不变，仅换可视外壳） ----------------
+     旧版是"蓝字小标题"，与上方正式卡片权重断裂；
+     现在改成与卡片同宽同圆角的"次级入口"：图标 + 文案 + 展开箭头。 */
+  .gate .details {
+    @apply rounded-2xl p-4 grid gap-3;
+    background-color: var(--card-bg);
+    border: 1px solid var(--card-border);
+    box-shadow: var(--card-shadow);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+  }
+  .gate .details > summary {
+    @apply cursor-pointer list-none flex items-center gap-2.5 select-none;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--ios-text-primary);
+  }
+  .gate .details > summary::-webkit-details-marker {
+    display: none;
+  }
+  .gate .details > summary:hover {
+    color: var(--ios-blue);
+  }
+  /* 左侧图标：圆角方形徽章 */
+  .gate .details > summary::before {
+    content: "＋";
+    display: grid;
+    place-items: center;
+    width: 20px;
+    height: 20px;
+    flex: none;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1;
+    color: var(--ios-text-secondary);
+    background-color: var(--btn-default-bg);
+    border: 1px solid var(--card-border);
+    transition: all 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .gate .details > summary:hover::before {
+    color: #fff;
+    background-color: var(--ios-blue);
+    border-color: transparent;
+  }
+  .gate .details[open] > summary::before {
+    content: "－";
+    transform: none;
+  }
+  /* 右侧展开箭头由 summary 的自定义伪元素承担（保留原 ▸ 语意在右侧） */
+  .gate .details > summary .gate-details-caret {
+    margin-left: auto;
+    flex: none;
+    font-size: 11px;
+    color: var(--ios-text-tertiary);
+    transition: transform 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .gate .details[open] > summary .gate-details-caret {
+    transform: rotate(90deg);
+  }
+  .gate .details > .gate-details-body {
+    @apply grid gap-3;
+    animation: detailsFade 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  /* ---------------- 设置页的折叠卡（★ 2026-10-05） ----------------
+     「关于软件」「安全约定」从"平铺外显"改成"点进去才看"。
+     结构与登录页同源（details > summary + body），但外观按 .card 对齐：
+       · 用 .card 做外壳会与 .details 自己的边框/背景叠成双层，
+         所以这里让 .details 只负责布局，视觉全部沿用 .card 的变量；
+       · summary 是"卡片标题"的角色，字号对齐 .card-title（15px/600）。 */
+  .settings .details {
+    @apply rounded-2xl p-4 grid gap-3;
+    background-color: var(--card-bg);
+    border: 1px solid var(--card-border);
+    box-shadow: var(--card-shadow);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+    transition: border-color 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  .settings .details:hover {
+    border-color: var(--card-border-hover);
+  }
+  .settings .details > summary {
+    @apply cursor-pointer list-none flex items-center gap-2 select-none;
+    margin: 0;
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: 0;
+    color: var(--ios-text-primary);
+  }
+  .settings .details > summary::-webkit-details-marker {
+    display: none;
+  }
+  .settings .details > summary:hover {
+    color: var(--ios-blue);
+  }
+  /* 左侧图标：与登录页同款的圆角方形徽章（＋ / －） */
+  .settings .details > summary::before {
+    content: "＋";
+    display: grid;
+    place-items: center;
+    width: 20px;
+    height: 20px;
+    flex: none;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1;
+    color: var(--ios-text-secondary);
+    background-color: var(--btn-default-bg);
+    border: 1px solid var(--card-border);
+    transition: all 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .settings .details > summary:hover::before {
+    color: #fff;
+    background-color: var(--ios-blue);
+    border-color: transparent;
+  }
+  .settings .details[open] > summary::before {
+    content: "－";
+  }
+  .settings .details > summary .settings-details-caret {
+    margin-left: auto;
+    flex: none;
+    font-size: 11px;
+    color: var(--ios-text-tertiary);
+    transition: transform 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .settings .details[open] > summary .settings-details-caret {
+    transform: rotate(90deg);
+  }
+  .settings .details > .settings-details-body {
+    @apply grid gap-3;
+    animation: detailsFade 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  /* 小节标题（★ 2026-10-06）：「安全与隐私」卡内的分组行
+     （凭据与数据 / 网络边界 / 行为边界），比 bullets 条目高半级。
+     与上下相邻块的间距交给 body 的 grid gap-3，不要再加 margin。 */
+  .settings .settings-subhead {
+    margin: 0;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--ios-text-tertiary);
+  }
+  /* 减少动效偏好下不做展开动画（与全局一致） */
+  @media (prefers-reduced-motion: reduce) {
+    .settings .details > summary::before,
+    .settings .details > summary .settings-details-caret {
+      transition: none;
+    }
+    .settings .details > .settings-details-body {
+      animation: none;
+    }
+  }
+
+  /* ---------------- 卡片内的细节补强 ---------------- */
+  /* 「已保存的账号」卡片的标题行：刷新按钮与标题基线对齐 */
+  .gate .card-title .linkbtn {
+    font-weight: 500;
+  }
+  /* 空账号库时下拉呈"禁用感"的样式已由 `.custom-select--disabled` 承担
+     （★ 2026-10-05 登录页换成自绘下拉后，原本这里针对原生 <select> 的
+     `:has(option[value=""]:checked):invalid` 规则失去对象，已删除）。 */
+  /* 主按钮 loading 态（与 login.js 的 setLoginBusy 对齐） */
+  .btn--loading {
+    position: relative;
+    pointer-events: none;
+  }
+  .btn--loading::after {
+    content: "";
+    width: 13px;
+    height: 13px;
+    flex: none;
+    border-radius: 9999px;
+    border: 2px solid rgba(255, 255, 255, 0.35);
+    border-top-color: #fff;
+    animation: spin 0.7s linear infinite;
+  }
+  /* 非主按钮的 loading 圈用主文字色 */
+  .btn:not(.btn--primary).btn--loading::after {
+    border-color: var(--ios-separator-strong);
+    border-top-color: var(--ios-text-primary);
+  }
+
+  /* ---------------- 账号卡列表（★ 2026-10-05，登录步专用） ----------------
+     「已保存的账号」从自绘下拉换成卡片列表：信息拆行各自截断，
+     360px 手机视口也装得下；点击选中（蓝框 + ✓），主按钮统一「登录」。
+     视觉与选区步的 .server-card 同源（同圆角/边框/选中态）。 */
+  .acct-list {
+    @apply grid gap-2;
+  }
+  .acct-card {
+    @apply w-full min-w-0 flex items-center gap-2.5 p-2.5 rounded-xl text-left
+      cursor-pointer select-none transition-all;
+    background-color: var(--btn-default-bg);
+    border: 1px solid var(--card-border);
+    color: var(--ios-text-primary);
+    font: inherit;
+  }
+  .acct-card:hover {
+    border-color: var(--card-border-hover);
+  }
+  .acct-card--on {
+    background-color: rgba(37, 99, 235, 0.12);
+    border-color: rgba(59, 130, 246, 0.55);
+    box-shadow: 0 0 12px rgba(0, 122, 255, 0.15);
+  }
+  /* 左侧圆形徽标：角色卡优先真头像（★ 2026-10-05，services/avatar_service.py
+     解析出的 data-url，img 铺满圆形、object-fit:cover 任意比例不变形），
+     无图回退角色名首字（蓝紫渐变）；平台卡用 🔑（中性底） */
+  .acct-avatar {
+    @apply w-[34px] h-[34px] flex-none grid place-items-center rounded-full
+      text-[14px] font-semibold text-white overflow-hidden;
+    background: linear-gradient(135deg, rgba(0, 122, 255, 0.85), rgba(175, 82, 222, 0.85));
+  }
+  .acct-avatar img {
+    @apply w-full h-full object-cover;
+  }
+  .acct-avatar--key {
+    @apply text-[15px];
+    background: var(--ios-surface-2, rgba(120, 120, 128, 0.22));
+    border: 1px solid var(--card-border);
+  }
+  .acct-body {
+    @apply flex-1 min-w-0 grid gap-px;
+  }
+  .acct-main {
+    @apply flex items-center gap-1.5 min-w-0 text-[13px] font-semibold whitespace-nowrap;
+  }
+  .acct-sub {
+    @apply text-[11px] whitespace-nowrap overflow-hidden text-ellipsis;
+    color: var(--ios-text-secondary);
+  }
+  .acct-sub--dim {
+    color: var(--ios-text-tertiary);
+  }
+  .acct-check {
+    @apply w-[18px] h-[18px] flex-none grid place-items-center rounded-full
+      text-[11px] text-white;
+    background-color: var(--ios-blue);
+  }
+  /* 只有选中卡显示 ✓：未选卡的位置预留同尺寸，避免文字行宽跳动 */
+  .acct-card:not(.acct-card--on) .acct-check {
+    visibility: hidden;
+  }
+
+  /* ---------------- 移动端断点（<640px）：压缩留白，保留品牌头 ---------------- */
+  @media (max-width: 639px) {
+    .gate-mark {
+      width: 62px;
+      height: 62px;
+      border-radius: 18px;
+    }
+    .gate-mark .brand-logo {
+      height: 43px;
+      width: 43px;
+    }
+    .gate-mark::before {
+      inset: -12px;
+    }
+    .gate-wordmark strong {
+      font-size: 18px;
+    }
+    .gate-step-sep {
+      width: 18px;
+    }
+  }
+
+  /* 低动态偏好：关掉所有过渡与动画（可访问性） */
+  @media (prefers-reduced-motion: reduce) {
+    .gate-step-dot,
+    .gate .details > summary::before,
+    .gate .details > summary .gate-details-caret {
+      transition: none;
+    }
+    .btn--loading::after {
+      animation-duration: 1.4s;
+    }
+    .gate .details > .gate-details-body {
+      animation: none;
+    }
+  }
+
+  /* ------------------- iOS 风格深浅色外观切换控件 ------------------- */
+  .theme-picker {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.75rem;
+    max-width: 440px;
+    margin: 0.25rem 0 0.75rem;
+  }
+  @media (min-width: 640px) {
+    .theme-picker {
+      gap: 1rem;
+    }
+  }
+  .theme-card {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 1rem 0.75rem 0.875rem;
+    border-radius: 1rem;
+    border: 2px solid transparent;
+    background-color: var(--ios-surface-2);
+    cursor: pointer;
+    user-select: none;
+    transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .theme-card:hover {
+    transform: translateY(-2px);
+    background-color: var(--ios-surface-3);
+  }
+  .theme-card:active {
+    transform: scale(0.97);
+  }
+  .theme-card--active {
+    border-color: var(--ios-blue) !important;
+    background-color: var(--ios-surface-2) !important;
+    box-shadow: 0 4px 16px rgba(0, 122, 255, 0.22);
+  }
+  [data-theme="light"] .theme-card--active {
+    background-color: #ffffff !important;
+  }
+  .theme-card-preview {
+    width: 100%;
+    max-width: 130px;
+    height: 82px;
+    border-radius: 0.625rem;
+    border: 1px solid rgba(120, 120, 128, 0.2);
+    overflow: hidden;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+    display: flex;
+    flex-direction: column;
+    position: relative;
+  }
+  .theme-card-preview--light {
+    background: #f5f5f7;
+    border-color: rgba(0, 0, 0, 0.1);
+  }
+  .theme-card-preview--dark {
+    background: #1c1c1e;
+    border-color: rgba(255, 255, 255, 0.14);
+  }
+  .preview-top {
+    height: 14px;
+    width: 100%;
+    border-bottom: 1px solid rgba(120, 120, 128, 0.15);
+  }
+  .theme-card-preview--light .preview-top {
+    background: #ffffff;
+  }
+  .theme-card-preview--dark .preview-top {
+    background: #2c2c2e;
+    border-bottom-color: rgba(255, 255, 255, 0.1);
+  }
+  .preview-body {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+  }
+  .preview-sidebar {
+    width: 24px;
+    border-right: 1px solid rgba(120, 120, 128, 0.15);
+  }
+  .theme-card-preview--light .preview-sidebar {
+    background: #f0f0f2;
+  }
+  .theme-card-preview--dark .preview-sidebar {
+    background: #252528;
+    border-right-color: rgba(255, 255, 255, 0.1);
+  }
+  .preview-main {
+    flex: 1;
+    padding: 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .preview-pill {
+    height: 12px;
+    border-radius: 4px;
+  }
+  .theme-card-preview--light .preview-pill {
+    background: #ffffff;
+    border: 1px solid rgba(0, 0, 0, 0.06);
+  }
+  .theme-card-preview--dark .preview-pill {
+    background: #3a3a3c;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+  }
+  .preview-line {
+    height: 4px;
+    border-radius: 2px;
+    width: 80%;
+  }
+  .preview-line.short {
+    width: 50%;
+  }
+  .theme-card-preview--light .preview-line {
+    background: #d1d5db;
+  }
+  .theme-card-preview--dark .preview-line {
+    background: #636366;
+  }
+  .theme-card-name {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--ios-text-primary);
+  }
+  .theme-card-radio {
+    width: 20px;
+    height: 20px;
+    border-radius: 9999px;
+    border: 2px solid var(--ios-text-tertiary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s ease;
+  }
+  .theme-card--active .theme-card-radio {
+    border-color: var(--ios-blue);
+    background-color: var(--ios-blue);
+  }
+  .theme-card--active .theme-card-radio::after {
+    content: "";
+    width: 8px;
+    height: 8px;
+    border-radius: 9999px;
+    background-color: #ffffff;
+  }
+  .theme-auto-switch {
+    max-width: 440px;
+    border-top: 1px solid var(--ios-separator);
+    padding-top: 0.75rem;
+    margin-top: 0.25rem;
+  }
+
+  /* ------------------- 全局展开与折叠过渡动画 ------------------- */
+  .panel:not(.hidden) {
+    animation: panelFadeIn 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  @keyframes panelFadeIn {
+    from {
+      opacity: 0;
+      transform: translateY(6px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  .task-params {
+    animation: taskParamsSlideDown 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  @keyframes taskParamsSlideDown {
+    from {
+      opacity: 0;
+      transform: translateY(-8px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  .custom-select-menu {
+    animation: popoverFadeIn 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+    transform-origin: top center;
+  }
+  @keyframes popoverFadeIn {
+    from {
+      opacity: 0;
+      transform: scale(0.96) translateY(-4px);
+    }
+    to {
+      opacity: 1;
+      transform: scale(1) translateY(0);
+    }
+  }
+  .custom-select-menu--up {
+    animation: popoverFadeInUp 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+    transform-origin: bottom center;
+  }
+  @keyframes popoverFadeInUp {
+    from {
+      opacity: 0;
+      transform: scale(0.96) translateY(4px);
+    }
+    to {
+      opacity: 1;
+      transform: scale(1) translateY(0);
+    }
+  }
+
+  .details[open] {
+    animation: detailsFade 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  @keyframes detailsFade {
+    from {
+      opacity: 0.6;
+      transform: translateY(-3px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  /* 全局平滑主题过渡 */
+  html.theme-transitioning,
+  html.theme-transitioning *,
+  html.theme-transitioning *::before,
+  html.theme-transitioning *::after {
+    transition: background-color 0.22s ease, border-color 0.22s ease, color 0.18s ease, fill 0.18s ease, stroke 0.18s ease !important;
+    transition-delay: 0s !important;
+  }
+
+  /* ------------------- 窗口最小化 / 还原 / 最大化过渡动画 ------------------- */
+  html.win-minimizing {
+    opacity: 0 !important;
+    transform: scale(0.9) translateY(45px) !important;
+    filter: blur(5px) !important;
+    transition: opacity 0.18s ease-in, transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), filter 0.2s ease !important;
+    pointer-events: none !important;
+  }
+
+  html.win-restoring {
+    animation: winRestoreIn 0.24s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  }
+  @keyframes winRestoreIn {
+    from {
+      opacity: 0.5;
+      transform: scale(0.94) translateY(25px);
+      filter: blur(3px);
+    }
+    to {
+      opacity: 1;
+      transform: scale(1) translateY(0);
+      filter: blur(0);
+    }
+  }
+
+  html.win-maximizing-transition,
+  html.win-maximizing-transition body,
+  html.win-maximizing-transition .topbar,
+  html.win-maximizing-transition .sidebar,
+  html.win-maximizing-transition .content,
+  html.win-maximizing-transition .shell {
+    transition: all 0.22s cubic-bezier(0.16, 1, 0.3, 1) !important;
+  }
+
+  html.win-closing {
+    opacity: 0 !important;
+    transform: scale(0.94) !important;
+    transition: all 0.15s ease-out !important;
+    pointer-events: none !important;
+  }
+
+  .hidden {
+    display: none !important;
+  }
+  .hint, .muted {
+    @apply text-[12px];
+    color: var(--ios-text-secondary);
+  }
+  .small {
+    @apply text-[11px];
+    color: var(--ios-text-tertiary);
+  }
+  .error {
+    @apply text-[12px] text-rose-400 bg-rose-500/10 border border-rose-500/20 p-2.5 rounded-xl;
+  }
+  .empty {
+    @apply text-[12px] text-center py-6 col-span-full;
+    color: var(--ios-text-tertiary);
+  }
+}
+
+/* ============================================================
+   响应式断点控制
+   ============================================================ */
+/* 移动端窄屏 (<900px) */
+@media (max-width: 899px) {
+  .shell {
+    display: flex;
+    flex-direction: column;
+    height: calc(100dvh - var(--topbar-h) - var(--safe-top));
+    overflow: hidden;
+  }
+  .sidebar {
+    height: auto;
+    flex: none;
+    position: static;
+    padding: 6px 12px;
+    padding-left: calc(0.75rem + var(--safe-left));
+    padding-right: calc(0.75rem + var(--safe-right));
+    border-right: none;
+    border-bottom: 1px solid var(--ios-separator);
+  }
+  .sidebar .tabs {
+    flex-direction: row;
+    overflow-x: auto;
+    padding: 2px 0;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+    /* 【2026-10-06 修】窄屏的分区导航是横向滚动的，两端用渐隐暗示"还有内容"。
+       ★ 但渐隐擦的是**元素盒子两端**，与滚动位置无关 —— 滑到最右时那一侧
+       已经没有更多内容了，渐隐却还在，于是永远啃掉最后一个标签的一截：
+       滑到头也看不全「设置」（实测「置」字右半截被压到 31/255 亮度）。
+       所以两侧的开关交给 JS（app.js::syncTabsScrollHint）按滚动位置挂
+       .is-at-start / .is-at-end，这里只描述四种状态各长什么样。 */
+    --tabs-fade: 30px;
+    -webkit-mask-image: linear-gradient(to right, transparent 0, #000 var(--tabs-fade), #000 calc(100% - var(--tabs-fade)), transparent 100%);
+    mask-image: linear-gradient(to right, transparent 0, #000 var(--tabs-fade), #000 calc(100% - var(--tabs-fade)), transparent 100%);
+  }
+  /* 已在最左 → 左边没有更多内容，去掉左侧渐隐 */
+  .sidebar .tabs.is-at-start {
+    -webkit-mask-image: linear-gradient(to right, #000 0, #000 calc(100% - var(--tabs-fade)), transparent 100%);
+    mask-image: linear-gradient(to right, #000 0, #000 calc(100% - var(--tabs-fade)), transparent 100%);
+  }
+  /* 已在最右 → 右边没有更多内容，去掉右侧渐隐（这条就是「设置」被切掉的修复） */
+  .sidebar .tabs.is-at-end {
+    -webkit-mask-image: linear-gradient(to right, transparent 0, #000 var(--tabs-fade), #000 100%);
+    mask-image: linear-gradient(to right, transparent 0, #000 var(--tabs-fade), #000 100%);
+  }
+  /* 两侧都到头（宽屏纵向列表 / 窄屏一屏放得下）→ 根本不需要渐隐 */
+  .sidebar .tabs.is-at-start.is-at-end {
+    -webkit-mask-image: none;
+    mask-image: none;
+  }
+  .sidebar .tabs::-webkit-scrollbar {
+    display: none;
+  }
+  .sidebar .tab {
+    flex: none;
+    white-space: nowrap;
+    width: auto;
+    padding: 6px 14px;
+    border-radius: 999px;
+  }
+  .side-foot {
+    display: none;
+  }
+  .content {
+    flex: 1 1 0%;
+    min-height: 0;
+    height: 100%;
+    overflow-y: auto;
+    overflow-x: hidden;
+    min-width: 0;
+    max-width: 100%;
+  }
+}
+
+@media (max-width: 640px) {
+  .kv {
+    grid-template-columns: minmax(0, 1fr) !important;
+    gap: 0.75rem !important;
+  }
+  .kv dt {
+    margin-bottom: -0.25rem;
+  }
+}
+
+/* PC 桌面窗口 / 宽屏 (≥1024px)：平滑优雅的进度展现，避免挤压页面 */
+@media (min-width: 1024px) {
+  .progress-live-card {
+    transition: all 0.3s ease-in-out;
+  }
+}

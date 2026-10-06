@@ -1,0 +1,509 @@
+<!doctype html>
+<!--
+  米娅小助手 · 任务执行界面（2026-09-30 起与登录页分离）
+
+  【两页分工】
+  登录 + 选区在 login.html（"门"）；本页只做"屋子"——
+  登录并选区成功后跳转进来，未登录直接访问会被 boot() 送回登录页。
+
+  【为什么菜单是侧边栏】
+  任务界面是"控制台"形态：五个分区（信息展示 / 自动任务 / 主动任务 /
+  钻石使用 / 关于）靠左侧常驻导航切换，宽屏下一眼可见所有去处；
+  手机窄屏时侧边栏自动重排成顶部横向滚动标签（CSS 一套 DOM 两种排法）。
+
+  【为什么仍然是零依赖、无构建】
+  手机访问时常常只有局域网、没有外网；一旦依赖 CDN，断网就白屏。
+  同时纯手写 HTML/CSS/JS 意味着改完刷新即可见，不需要 node/npm。
+
+  【数据从哪来】
+  所有数字（角色名 / 金币 / 钻石 / 竞技次数）都来自后端只读接口，
+  前端**不做任何协议解析**，也不写死任何任务名：任务清单由 /api/tasks 的规格驱动。
+
+  【回退开关】?flat=1 跳过"未登录回登录页"的检查，直接进本页
+  —— 三屏/两页万一出问题，仍有一条能用的老路径。
+-->
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+    <meta name="color-scheme" content="light dark" />
+    <title>米娅小助手</title>
+    <script>
+      (function () {
+        try {
+          var auto = localStorage.getItem("cherrytale.themeAuto");
+          var saved = localStorage.getItem("cherrytale.theme");
+          var isLight = false;
+          if (auto === "true" || !saved) {
+            isLight = window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches;
+          } else {
+            isLight = saved === "light";
+          }
+          if (isLight) {
+            document.documentElement.setAttribute("data-theme", "light");
+          } else {
+            document.documentElement.setAttribute("data-theme", "dark");
+          }
+        } catch (e) {}
+      })();
+    </script>
+    <link rel="manifest" href="assets/manifest.webmanifest" />
+    <link rel="icon" type="image/png" href="assets/icons/brand/favicon.png" />
+    <link rel="apple-touch-icon" href="assets/icons/brand/icon-192.png" />
+    <link rel="stylesheet" href="assets/styles.css?v=20261006_8" />
+  </head>
+  <body>
+    <!-- ================= 顶栏：品牌 + 连接状态 + 窗口控制停靠位 =================
+         桌面窗口的「最小化 / 最大化 / 关闭」由 main_gui.py 注入到 #win-dock
+         （右上角是 Windows 的惯例位置）；网页版 / 手机上这里是空的，不显示。 -->
+    <header class="topbar">
+      <div class="brand">
+        <img class="brand-logo" src="assets/icons/brand/logo.png?v=20261005_5" alt="米娅小助手" />
+        <strong>米娅小助手</strong>
+        <span id="app-version" class="muted small hidden sm:inline"></span>
+      </div>
+      <div class="topbar-actions">
+        <span id="topbar-session" class="topbar-session hidden" title="当前登录会话"></span>
+        <!-- 连接状态点（2026-10-06 改版）：不再显示「已连接 / 连接中…」文字，只靠颜色判断 ——
+             灰 = 正在连接、红 = 连接失败、绿 = 连接成功；绿点呼吸脉冲 = 任务运行中。
+             机器可读状态挂 data-state，提示文案走 title + aria-label（色盲 / 读屏兜底）。 -->
+        <span id="conn" class="conn conn--wait" data-state="wait" role="status" aria-label="正在连接" title="正在连接"></span>
+        <!-- 退出仍必须是文字按钮（2026-10-01 修）：⏻ 电源图标紧挨窗口控制时
+             会被当成"关闭窗口"，点了却只是回到登录页。右上角只允许
+             —/□/✕ 三件套长得像窗口控制。
+             2026-10-06：形态改为与下方分区导航 .tab 同族的简约胶囊（透明底 + ⇄ 图标）。 -->
+        <button id="btn-logout" class="topbar-switch" type="button" title="切换账号（回到登录页，窗口不关闭）" aria-label="切换账号">
+          <svg class="topbar-switch-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8h13"/><polyline points="14 5 17 8 14 11"/><path d="M20 16H7"/><polyline points="10 13 7 16 10 19"/></svg>
+          <span>切换账号</span>
+        </button>
+        <span id="win-dock" class="win-dock"></span>
+      </div>
+    </header>
+
+    <div class="shell">
+      <!-- ================= 侧边栏：分区导航 + 会话摘要 ================= -->
+      <aside class="sidebar">
+        <!-- 分区导航：宽屏纵向铺开，窄屏（<900px）由 CSS 重排成横向滚动 -->
+        <nav id="tabs" class="tabs" role="tablist">
+          <button class="tab tab--on" data-tab="info" type="button" role="tab" aria-selected="true">
+            <svg class="tab-icon-svg" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/></svg>
+            <span>信息展示</span>
+          </button>
+          <button class="tab" data-tab="auto" type="button" role="tab" aria-selected="false">
+            <svg class="tab-icon-svg" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 14"/></svg>
+            <span>自动任务</span>
+          </button>
+          <button class="tab" data-tab="manual" type="button" role="tab" aria-selected="false">
+            <svg class="tab-icon-svg" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+            <span>主动任务</span>
+          </button>
+          <button class="tab" data-tab="diamond" type="button" role="tab" aria-selected="false">
+            <svg class="tab-icon-svg" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h12l4 7-10 11L2 10l4-7z"/><line x1="2" y1="10" x2="22" y2="10"/><path d="M12 21L8.5 10 12 3l3.5 7L12 21z"/></svg>
+            <span>钻石使用</span>
+          </button>
+          <button class="tab" data-tab="logs" type="button" role="tab" aria-selected="false">
+            <svg class="tab-icon-svg" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+            <span>日志记录</span>
+          </button>
+          <button class="tab" data-tab="settings" type="button" role="tab" aria-selected="false">
+            <svg class="tab-icon-svg" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+            <span>设置</span>
+          </button>
+        </nav>
+
+        <div class="side-foot">
+          <span id="side-session" class="muted small"></span>
+        </div>
+      </aside>
+
+      <!-- ================= 内容区：任务面板 + 进度 + 日志 ================= -->
+      <main class="content">
+        <!-- 运行选项：开发调试入口（?dev=1 时显示） -->
+        <div id="run-options-card" class="card run-options hidden">
+          <label class="switch">
+            <input id="opt-dry-run" type="checkbox" />
+            <span>
+              <strong>演练模式（开发者调试）</strong>
+              <em>只组装并打印报文，不真实发包</em>
+            </span>
+          </label>
+        </div>
+
+        <!-- ① 信息展示 -->
+        <section id="panel-info" class="panel">
+          <div class="info-topbar">
+            <div class="info-topbar-left">
+              <span class="info-topbar-title">角色与资源</span>
+              <span id="info-updated" class="info-updated">上次刷新：—</span>
+            </div>
+            <button id="btn-refresh-info" class="btn btn--compact btn--ghost" type="button" title="刷新角色和资源数据">刷新</button>
+          </div>
+          <!-- 数据读取警告原来挂在这里（「角色与资源」标题正下方），2026-10-06 按
+               用户要求挪到「运行进度」上方 —— 见本文件下方的 #info-errors。 -->
+          <div id="info-grid" class="info-dashboard"></div>
+        </section>
+
+        <!-- ② 自动任务 -->
+        <section id="panel-auto" class="panel hidden">
+          <p class="hint panel-hint">
+            勾上的任务会按任务类型进行不同逻辑的自动执行，每个游戏日会进行刷新，新勾选的任务会立刻补跑。想单独跑某个任务，随时点卡片右侧的「执行」，不受此限制。
+          </p>
+          <!-- 自动执行状态行：替代已删除的底部操作条（那里唯一的信息就是"已选几个任务"） -->
+          <p id="auto-status" class="auto-status">自动任务：读取中…</p>
+          <div id="tasks-auto" class="tasks"></div>
+        </section>
+
+        <!-- ③ 主动任务 -->
+        <section id="panel-manual" class="panel hidden">
+          <p class="hint panel-hint">
+            主动任务涉及资源消耗或参数配置，需展开并点击「执行」触发。
+          </p>
+          <div id="tasks-manual" class="tasks"></div>
+        </section>
+
+        <!-- ④ 钻石使用（总闸在这里；用途开关在具体任务的参数里）
+             ★ 2026-10-05：开关框下面原本还有两段解释
+             （"当前服务端配置：…" 与 "开启总闸且具体任务授权后才会消耗钻石。"），
+             按用户要求删除 —— 只留开关框里那句，够了。 -->
+        <section id="panel-diamond" class="panel hidden">
+          <div class="card">
+            <label class="switch switch--danger">
+              <input id="opt-allow-diamond" type="checkbox" />
+              <span>
+                <strong>允许花钻石（总闸）</strong>
+                <em>默认关闭。关闭时任何花钻石的请求连字节都不会被组装出来</em>
+              </span>
+            </label>
+          </div>
+          <div class="card">
+            <h2 class="card-title">会涉及钻石的任务</h2>
+            <div id="tasks-diamond" class="tasks"></div>
+          </div>
+        </section>
+
+        <!-- ⑤ 日志记录：运行结果（每个任务一行 ✔/✘ 摘要）与开发者日志（导出用）；
+             底部日志坞的开关设置也在这一分区（见下方设置卡） -->
+        <section id="panel-logs" class="panel hidden">
+          <div class="card card--flush">
+            <h2 class="card-title">
+              运行结果
+              <span class="log-tools">
+                <button id="btn-runlog-clear" class="linkbtn" type="button">清空</button>
+                <button id="btn-runlog-copy" class="linkbtn" type="button">复制</button>
+              </span>
+            </h2>
+            <!-- 只看结果：每个任务一行 ✔/✘ + 摘要，警告/错误保留首行；
+                 任务的脚本细节不在这里（要完整记录用下方「保存」导出） -->
+            <div id="run-log" class="log log--run" role="log" aria-live="polite">
+              <p class="log-placeholder">还没有运行结果 —— 任务执行后会在这里逐条列出 ✔ / ✘ 与一句话摘要</p>
+            </div>
+          </div>
+          <!-- 开发者日志（2026-10-01 起默认不展开显示）：全量流只进缓冲，
+               需要排查问题时点「保存」导出完整日志文件；
+               「详细日志」开关（原在运行选项里）也归位到这里 —— 它管的就是 DEBUG 级别 -->
+          <div class="card dev-log-card">
+            <h2 class="card-title">
+              开发者日志
+              <span class="log-tools">
+                <label class="switch switch--inline">
+                  <input id="opt-verbose" type="checkbox" />
+                  <span>详细日志（DEBUG）</span>
+                </label>
+                <button id="btn-devlog-save" class="btn btn--compact" type="button">保存</button>
+              </span>
+            </h2>
+            <p class="hint">
+              完整记录 DEBUG / INFO / WARNING / ERROR 与任务输出，默认不在页面上展开
+              （运行日志和底部日志坞已经覆盖日常查看）；点「保存」导出为文本文件，
+              「详细日志」让后端临时输出 DEBUG 级请求细节。
+            </p>
+            <!-- 保存后提示的简约UI标 -->
+            <div id="devlog-save-badge" class="devlog-saved-badge hidden">
+              <div class="devlog-saved-header">
+                <span class="devlog-saved-status">
+                  <span class="devlog-saved-icon" aria-hidden="true">✔</span>
+                  <span id="devlog-saved-status-text">日志已保存至本地文件</span>
+                </span>
+                <span class="devlog-saved-actions">
+                  <button id="btn-devlog-open-folder" class="btn btn--ghost btn--compact hidden" type="button" title="打开存放目录">打开目录</button>
+                  <button id="btn-devlog-copy-path" class="btn btn--ghost btn--compact" type="button" title="复制日志路径">复制路径</button>
+                </span>
+              </div>
+              <div class="devlog-saved-path-wrap">
+                <span id="devlog-saved-label" class="devlog-saved-label">存储路径：</span>
+                <code id="devlog-saved-path" class="devlog-saved-path"></code>
+              </div>
+            </div>
+          </div>
+          <!-- 底部日志坞开关（样式参考 lucima-tools 的 log-dock-setting）：
+               开着时右下角悬浮一个 peek 按钮，展开后是一块可拖拽调高的面板 -->
+          <div class="card">
+            <label class="switch log-dock-setting">
+              <input id="opt-bottom-log" type="checkbox" checked />
+              <span>
+                <strong>底部运行日志坞</strong>
+                <em>收起时在右下角悬浮一个按钮（新日志显示未读数）；展开后是一块可拖拽调高的运行日志面板，只显示任务输出与警告错误</em>
+              </span>
+            </label>
+          </div>
+        </section>
+
+        <!-- ⑥ 设置（包含外观切换 + 关于 / 安全与隐私 / 免责声明） -->
+        <section id="panel-settings" class="panel settings hidden">
+          <div class="card">
+            <h2 class="card-title">外观设置</h2>
+            <p class="hint">自定义界面的色彩模式，支持日光模式与暗夜模式无缝切换。</p>
+            <div class="theme-picker">
+              <!-- 浅色外观卡片 -->
+              <div class="theme-card" id="theme-card-light" role="button" tabindex="0" title="切换到日光模式">
+                <div class="theme-card-preview theme-card-preview--light">
+                  <div class="preview-top"></div>
+                  <div class="preview-body">
+                    <div class="preview-sidebar"></div>
+                    <div class="preview-main">
+                      <div class="preview-pill"></div>
+                      <div class="preview-line"></div>
+                      <div class="preview-line short"></div>
+                    </div>
+                  </div>
+                </div>
+                <span class="theme-card-name">浅色</span>
+                <span class="theme-card-radio" aria-hidden="true"></span>
+              </div>
+
+              <!-- 深色外观卡片 -->
+              <div class="theme-card" id="theme-card-dark" role="button" tabindex="0" title="切换到暗夜模式">
+                <div class="theme-card-preview theme-card-preview--dark">
+                  <div class="preview-top"></div>
+                  <div class="preview-body">
+                    <div class="preview-sidebar"></div>
+                    <div class="preview-main">
+                      <div class="preview-pill"></div>
+                      <div class="preview-line"></div>
+                      <div class="preview-line short"></div>
+                    </div>
+                  </div>
+                </div>
+                <span class="theme-card-name">深色</span>
+                <span class="theme-card-radio" aria-hidden="true"></span>
+              </div>
+            </div>
+
+            <label class="switch theme-auto-switch">
+              <span>
+                <strong>自动跟随系统外观</strong>
+                <em>根据操作系统的深浅色偏好自动适配</em>
+              </span>
+              <input id="opt-theme-auto" type="checkbox" />
+            </label>
+          </div>
+
+          <!-- ★ 2026-10-05：原本「关于软件」「安全约定」两张卡是**平铺展开**的，
+               一进设置页就铺满整屏。按用户要求改成"点进去才看"（与大多数软件一致），
+               用与登录页同款的 details 折叠范式。
+
+               ★ 2026-10-06：按开源工具的通行规范整体重构为三张卡（中性书面语）——
+               ①「关于」补齐许可证/版权/第三方素材归属（README、NOTICE 已有，UI 此前缺失），
+                 并删掉「不代你登录、不改你的账号」这句失实表述（免密重登与任务执行
+                 都与此矛盾，见 webapi/app.py 被挤号自动重登）；
+               ②「安全约定」→「安全与隐私」，6 条平铺改为「凭据与数据 / 网络边界 /
+                 行为边界」三组，补上演练模式、POST 不重试、同源校验（后三者 README
+                 安全设计表里早有、UI 一直没写）；
+               ③ 新增「免责声明」独立卡，逐条对应 NOTICE 第四/五节（封号风险、AS IS、
+                 「只读+闸门」不构成安全承诺）——此前风险披露在 UI 里为零。
+               每条文案都与 notes/web_layer.md 的实现底稿对得上；#about-version /
+               #about-session 两个 id 是 app.js 的填充锚点，改名前先改 renderIdentity。 -->
+          <details class="details">
+            <summary>
+              <span>关于</span>
+              <span class="settings-details-caret" aria-hidden="true">▸</span>
+            </summary>
+            <div class="settings-details-body">
+              <dl class="kv">
+                <dt>版本</dt>
+                <dd id="about-version"></dd>
+                <dt>项目性质</dt>
+                <dd>
+                  本机运行的个人学习项目：通过协议逆向复现 Cherrytale 的通信与
+                  任务流程，把每日重复操作（领取、扫荡、市集采买等）整理为
+                  可勾选、可设定次数的任务。
+                </dd>
+                <dt>执行逻辑</dt>
+                <dd>
+                  命令行 <code>python main.py run …</code> 与网页端共用同一套
+                  任务执行代码；网页端是其图形界面。
+                </dd>
+                <dt>数据来源</dt>
+                <dd>
+                  数据全部来自游戏官方网关的<strong>只读</strong>接口
+                  （角色与资源、主线进度、活动关卡、礼包列表等）；
+                  登录与任务执行均使用你保存在本机的凭据，以你的账号身份进行。
+                </dd>
+                <dt>许可证</dt>
+                <dd>
+                  GNU General Public License v3.0（完整条款见根目录
+                  <code>LICENSE</code>）。
+                </dd>
+                <dt>版权</dt>
+                <dd>
+                  Copyright © 2026 laqlaq401-sudo。游戏美术、角色头像、装备图标等
+                  第三方素材不在 GPL 授权范围内，归各自权利人所有（见
+                  <code>NOTICE</code>）。
+                </dd>
+                <dt>当前会话</dt>
+                <dd id="about-session"></dd>
+              </dl>
+              <p class="hint">
+                详细用法与各任务的具体行为，见项目根目录的
+                <code>README.md</code>。
+              </p>
+            </div>
+          </details>
+
+          <details class="details">
+            <summary>
+              <span>安全与隐私</span>
+              <span class="settings-details-caret" aria-hidden="true">▸</span>
+            </summary>
+            <div class="settings-details-body">
+              <p class="settings-subhead">凭据与数据</p>
+              <ul class="bullets">
+                <li>
+                  账号密码只在内存中使用一次，用于向官方服务换取令牌，随即丢弃——
+                  不写入文件、不进日志、不回显。
+                </li>
+                <li>
+                  网页端登录令牌仅保存在当前标签页的会话存储中，关闭标签页即失效；
+                  换用其他浏览器或设备需重新登录。
+                </li>
+                <li>
+                  账号凭据保存在本机；会话被挤下线时，工具会用保存的凭据自动重新
+                  登录并续跑当前任务。
+                </li>
+              </ul>
+              <p class="settings-subhead">网络边界</p>
+              <ul class="bullets">
+                <li>
+                  服务默认只监听 <code>127.0.0.1</code>，仅本机可访问。
+                  如需局域网访问，必须以 <code>--host 0.0.0.0 --token 你的口令</code>
+                  启动，缺少口令时服务拒绝启动。
+                </li>
+                <li>
+                  服务不发送跨域响应头，并校验请求的 <code>Host</code> 与
+                  <code>Origin</code>，拒绝非同源访问。
+                </li>
+                <li>
+                  同一时刻只允许一次运行；重复触发会排队等待，不并发发包。
+                </li>
+              </ul>
+              <p class="settings-subhead">行为边界</p>
+              <ul class="bullets">
+                <li>
+                  默认只读：任务未设定次数时不发送消耗类请求。
+                </li>
+                <li>
+                  钻石消耗默认关闭：需先在「钻石使用」中打开总闸，且每个消耗型任务
+                  单独确认；总闸关闭时不组装消耗类请求。
+                </li>
+                <li>
+                  HTTP 层只重试 GET 请求；领取类请求一旦发出即不可撤销，
+                  工具不提供强制中断。
+                </li>
+                <li>
+                  演练模式只组装并显示报文字节，不联网发送。
+                </li>
+              </ul>
+            </div>
+          </details>
+
+          <details class="details">
+            <summary>
+              <span>免责声明</span>
+              <span class="settings-details-caret" aria-hidden="true">▸</span>
+            </summary>
+            <div class="settings-details-body">
+              <ul class="bullets">
+                <li>
+                  <strong>用途限定。</strong>
+                  本软件仅供学习、研究和参考，不构成任何形式的建议或承诺。
+                </li>
+                <li>
+                  <strong>账号风险。</strong>
+                  自动化操作可能违反游戏用户协议，可能导致账号被警告、封禁或造成
+                  虚拟财产损失。请仅在自己的账号上使用，自行评估并承担全部风险。
+                </li>
+                <li>
+                  <strong>素材边界。</strong>
+                  本软件不提供、不包含、不传播游戏本体或任何破解补丁；游戏派生
+                  素材不在分发范围内，需自行准备，其权利归游戏著作权人。
+                </li>
+                <li>
+                  <strong>无担保。</strong>
+                  本软件按「原样」（AS IS）提供，不附带任何明示或暗示的担保；
+                  作者或版权持有人不对使用本软件所产生的结果负责。
+                </li>
+                <li>
+                  <strong>安全声明边界。</strong>
+                  「默认只读＋消费闸门」用于降低误操作代价，不构成安全性承诺。
+                </li>
+              </ul>
+              <p class="hint">
+                完整条款见项目根目录的 <code>NOTICE</code> 与 <code>LICENSE</code>。
+              </p>
+            </div>
+          </details>
+        </section>
+
+        <!-- ================= 数据读取警告 + 运行进度（置于最下方） =================
+             【2026-10-06 挪位】这条红框原来挂在「角色与资源」标题正下方，太抢眼、
+             又打断角色卡片的阅读。用户要求"只放在运行进度的上面" —— 于是移到这里。
+             语义上也更顺：它说的就是"本次读取哪几项没拿到"，与运行进度同属
+             "这一次执行发生了什么"，而且它出现的时机（刷新后 / 跑完任务后）
+             与进度卡显示的时机基本错开，两者不会打架。
+             ⚠️ 它是 .content 的直接子元素（不属于任何 panel）—— 所以在任何分区下
+             都位于内容区最底部；间距由 .content 的 grid gap 提供，别再加 margin。 -->
+        <p id="info-errors" class="error hidden"></p>
+
+        <section id="progress-card" class="card progress-live-card hidden">
+          <h2 class="card-title">
+            运行进度
+            <!-- 模式徽标：由 app.js 的 renderProgressMode() 按服务端回报的 dry_run 填 -->
+            <span id="progress-mode" class="badge hidden"></span>
+            <span id="progress-summary" class="muted small"></span>
+          </h2>
+          <ol id="progress" class="progress"></ol>
+        </section>
+      </main>
+    </div>
+
+    <!-- ================= 底部日志坞（参考 lucima-tools 的 bottom-log-dock） =================
+         收起：右下角悬浮 peek 按钮（有新运行日志时显示未读徽标）；
+         展开：固定底部的运行日志面板，顶缘拖拽条可调高。
+         显示与否由「日志记录」分区里的开关控制（body 的 bottom-log-enabled 类）。 -->
+    <button id="bottom-log-peek" class="bottom-log-peek hidden" type="button" title="展开运行结果" aria-label="展开运行结果">
+      <svg class="dock-peek-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="2.5" y="3.5" width="15" height="13" rx="3.5" stroke-width="1.5" />
+        <path d="M6 8l2.5 2L6 12" />
+        <line x1="11" y1="12" x2="14" y2="12" />
+      </svg>
+      <span class="dock-peek-text">运行日志</span>
+      <span id="dock-badge" class="dock-badge hidden">0</span>
+    </button>
+    <section id="bottom-log-dock" class="bottom-log-dock" role="complementary" aria-label="运行结果坞">
+      <div class="bottom-log-resizer" title="拖拽调整高度（↑ 加高 / ↓ 减低）"></div>
+      <div class="bottom-log-head">
+        <strong>运行结果</strong>
+        <span class="log-tools">
+          <button id="btn-dock-clear" class="linkbtn" type="button">清屏</button>
+          <button id="btn-dock-collapse" class="linkbtn" type="button">收起 ▾</button>
+        </span>
+      </div>
+      <div id="dock-log" class="log log--dock" role="log" aria-live="polite">
+        <p class="log-placeholder">收起时产生的运行结果会累积在这里，点右上角按钮展开查看</p>
+      </div>
+    </section>
+
+    <script src="assets/common.js?v=20261005_8"></script>
+    <script src="assets/app.js?v=20261006_5"></script>
+  </body>
+</html>

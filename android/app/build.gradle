@@ -1,0 +1,83 @@
+plugins {
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
+    id 'com.chaquo.python'
+}
+
+android {
+    namespace 'com.cherrytale.tool'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "com.cherrytale.tool"
+        minSdk 26
+        targetSdk 34
+        versionCode 13
+        versionName "1.0.0"
+
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+
+        ndk {
+            abiFilters "arm64-v8a", "x86_64"
+        }
+
+        chaquopy {
+            defaultConfig {
+                version "3.11"
+
+                // 【为什么必须显式指定】
+                // Chaquopy 要求构建机的 Python 版本与 App 内置版本主次号一致。
+                // 本机默认 python 是 3.14，这里指向 py 启动器管理的 3.11.9
+                // （py install 3.11 装好后 py -3.11 可用）。
+                buildPython "py", "-3.11"
+
+                pip {
+                    // 【2026-10-02 封包调整】
+                    // fastapi / uvicorn / pydantic 在 Chaquopy 上装不上（pydantic 2.x
+                    // 强依赖 pydantic-core，Chaquopy 仓库没有安卓构建；fastapi 因此
+                    // 也不可用）。安卓端改用：
+                    //   ① android/app/src/main/python/pydantic/     —— 纯 Python 垫片
+                    //   ② webapi/android_app.py                    —— 标准库 HTTP 服务器
+                    // 三者都与桌面版跑同一批模型单元测试（PYTHONPATH 指向安卓目录）。
+                    //
+                    // cryptography 钉 42.0.8：这是 Chaquopy 官方索引
+                    // （https://chaquo.com/pypi-13.1/）上同时有 cp311 + android
+                    // arm64/x86_64 预编译 wheel 的版本。
+                    // 【2026-10-06 网络修复】Chaquopy 默认主索引是 pypi.org，
+                    // 本机访问会挂死（实测 pip 进程 CPU=0s、内存 4.4MB 卡住不动，
+                    // 不是"慢"而是阻塞在网络等待）。主索引改用清华镜像。
+                    // cryptography 的安卓 arm64 wheel 只有 chaquo 官方源提供，
+                    // 因此必须保留为 extra-index，否则会退回到源码构建而失败。
+                    options "--index-url", "https://pypi.tuna.tsinghua.edu.cn/simple",
+                            "--extra-index-url", "https://chaquo.com/pypi-13.1"
+                    install "requests==2.34.2"
+                    install "cryptography==42.0.8"
+                    install "truststore==0.10.4"
+                }
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    kotlinOptions {
+        jvmTarget = '17'
+    }
+}
+
+dependencies {
+    implementation 'androidx.core:core-ktx:1.13.1'
+    implementation 'androidx.appcompat:appcompat:1.7.0'
+    implementation 'com.google.android.material:material:1.12.0'
+    implementation 'androidx.webkit:webkit:1.11.0'
+}

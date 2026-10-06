@@ -1,0 +1,357 @@
+# Cherrytale 元数据字符串字面量
+#
+# 本文件由 tools/extract_metadata_strings.py 自动生成，请勿手工编辑。
+# 重新生成：python tools/extract_metadata_strings.py
+#
+# 来源文件     : Cherrytale IL2CPP/global-metadata.dat
+# 元数据版本   : 27
+# 字面量总数   : 27884 条（去重后 27884 条）
+#
+# 【怎么用这份文件】
+#   1. 找接口地址    → 看「URL（完整地址）」与「域名 / 主机名」两节；
+#   2. 找签名盐      → 看「疑似密钥」两节（摘要/UUID、含具体关键词的标识符）；
+#   3. 找服务器地址  → 看「IP 地址」与「域名 / 主机名」两节；
+#   4. 查某个具体字符串 → python tools/extract_metadata_strings.py --grep 关键词
+#
+# 说明：IL2CPP 的字符串字面量是**唯一化**存储的（27884 条去重后仍是 27884 条），
+#       所以「[1 次]」这个计数当前恒为 1；保留它只是为了让格式稳定、将来可比。
+
+==============================================================================
+
+## URL（完整地址，可直接使用）（共 84 条，按出现次数降序，最多显示 60 条）
+
+  [  1 次] file:///
+  [  1 次] http://*:
+  [  1 次] http://io.weplay.io/socket.io/
+  [  1 次] http://james.newtonking.com/projects/json
+  [  1 次] http://localhost/
+  [  1 次] http://microsoft.com/wsdl/types/
+  [  1 次] http://msdn.microsoft.com/{0}/library/{1}.{2}.aspx
+  [  1 次] http://schemas.datacontract.org/2004/07/
+  [  1 次] http://schemas.datacontract.org/2004/07/System.Xml
+  [  1 次] http://schemas.microsoft.com/2003/10/Serialization/
+  [  1 次] http://schemas.microsoft.com/2003/10/Serialization/Arrays
+  [  1 次] http://schemas.microsoft.com/2004/10/E2ETraceEvent/TraceRecord
+  [  1 次] http://schemas.microsoft.com/clr/assem/
+  [  1 次] http://schemas.microsoft.com/clr/ns/
+  [  1 次] http://schemas.microsoft.com/clr/nsassem/
+  [  1 次] http://schemas.microsoft.com/ws/2008/06/identity/claims/role
+  [  1 次] http://schemas.xmlsoap.org/soap/encoding/
+  [  1 次] http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name
+  [  1 次] http://schemas.xmlsoap.org/wsdl/
+  [  1 次] http://smarturl.it/gametolineat
+  [  1 次] http://someone.is.screwing.with.the.headers.com/
+  [  1 次] http://tempuri.org/{0}/{1}
+  [  1 次] http://www.w3.org/
+  [  1 次] http://www.w3.org/1999/XMLSchema-instance
+  [  1 次] http://www.w3.org/2000/09/xmldsig#dsa-sha1
+  [  1 次] http://www.w3.org/2000/09/xmldsig#rsa-sha1
+  [  1 次] http://www.w3.org/2000/09/xmldsig#sha1
+  [  1 次] http://www.w3.org/2000/10/XMLSchema-instance
+  [  1 次] http://www.w3.org/2000/xmlns/
+  [  1 次] http://www.w3.org/2001/04/xmldsig-more#hmac-ripemd160
+  [  1 次] http://www.w3.org/2001/04/xmldsig-more#hmac-sha256
+  [  1 次] http://www.w3.org/2001/04/xmldsig-more#hmac-sha384
+  [  1 次] http://www.w3.org/2001/04/xmldsig-more#hmac-sha512
+  [  1 次] http://www.w3.org/2001/04/xmldsig-more#rsa-sha256
+  [  1 次] http://www.w3.org/2001/04/xmldsig-more#rsa-sha384
+  [  1 次] http://www.w3.org/2001/04/xmldsig-more#rsa-sha512
+  [  1 次] http://www.w3.org/2001/04/xmldsig-more#sha384
+  [  1 次] http://www.w3.org/2001/04/xmlenc#sha256
+  [  1 次] http://www.w3.org/2001/04/xmlenc#sha512
+  [  1 次] http://www.w3.org/2001/XMLSchema
+  [  1 次] http://www.w3.org/2001/XMLSchema#string
+  [  1 次] http://www.w3.org/2001/XMLSchema-instance
+  [  1 次] http://www.w3.org/2003/11/xpath-datatypes
+  [  1 次] http://www.w3.org/2004/06/xmlmime
+  [  1 次] http://www.w3.org/2004/08/xop/include
+  [  1 次] http://www.w3.org/2005/05/xmlmime
+  [  1 次] http://www.w3.org/XML/1998/namespace
+  [  1 次] https://a.hyenadata.net/api/trace/request
+  [  1 次] https://ann-rps.auer.game.tw/600R/Banner_Article.jsp?PK01=368&Languages=zhtw
+  [  1 次] https://api-ct-labs.ecchi.xxx/api/getMd5ByNode_V2.jsp?node={0}
+  [  1 次] https://api-ct-labs.ecchi.xxx/api/getServerState.jsp?version=
+  [  1 次] https://api-rps.auer.game.tw/payment/hami_order.jsp?account={0}&gs_id={1}&redeem_code={2}
+  [  1 次] https://api.nijiyome.jp
+  [  1 次] https://besthttpdemosite.azurewebsites.net
+  [  1 次] https://diosaforce.auer.game.tw/faq/
+  [  1 次] https://erogames.com/tracking/goal
+  [  1 次] https://eroges.com/en/terms-of-use
+  [  1 次] https://l.cardoz.net/api/trace/request
+  [  1 次] https://login-cq.ecchi.xxx/
+  [  1 次] https://login-eoa.auer.game.tw/
+  …… 其余 24 条已省略（用 --limit 调整）
+
+## 域名 / 主机名（共 81 条，按出现次数降序，最多显示 60 条）
+
+  [  1 次] dev-game-cq.ecchi.xxx
+  [  1 次] game-ct-dm.ecchi.xxx
+  [  1 次] game-ct-labs.ecchi.xxx
+  [  1 次] io.weplay.io
+  [  1 次] james.newtonking.com
+  [  1 次] microsoft.com
+  [  1 次] msdn.microsoft.com
+  [  1 次] schemas.datacontract.org
+  [  1 次] schemas.datacontract.org
+  [  1 次] schemas.microsoft.com
+  [  1 次] schemas.microsoft.com
+  [  1 次] schemas.microsoft.com
+  [  1 次] schemas.microsoft.com
+  [  1 次] schemas.microsoft.com
+  [  1 次] schemas.microsoft.com
+  [  1 次] schemas.microsoft.com
+  [  1 次] schemas.xmlsoap.org
+  [  1 次] schemas.xmlsoap.org
+  [  1 次] schemas.xmlsoap.org
+  [  1 次] smarturl.it
+  [  1 次] someone.is.screwing.with.the.headers.com
+  [  1 次] tempuri.org
+  [  1 次] www.w3.org
+  [  1 次] www.w3.org
+  [  1 次] www.w3.org
+  [  1 次] www.w3.org
+  [  1 次] www.w3.org
+  [  1 次] www.w3.org
+  [  1 次] www.w3.org
+  [  1 次] www.w3.org
+  [  1 次] www.w3.org
+  [  1 次] www.w3.org
+  [  1 次] www.w3.org
+  [  1 次] www.w3.org
+  [  1 次] www.w3.org
+  [  1 次] www.w3.org
+  [  1 次] www.w3.org
+  [  1 次] www.w3.org
+  [  1 次] www.w3.org
+  [  1 次] www.w3.org
+  [  1 次] www.w3.org
+  [  1 次] www.w3.org
+  [  1 次] www.w3.org
+  [  1 次] www.w3.org
+  [  1 次] www.w3.org
+  [  1 次] www.w3.org
+  [  1 次] www.w3.org
+  [  1 次] a.hyenadata.net
+  [  1 次] ann-rps.auer.game.tw
+  [  1 次] api-ct-labs.ecchi.xxx
+  [  1 次] api-ct-labs.ecchi.xxx
+  [  1 次] api-rps.auer.game.tw
+  [  1 次] api.nijiyome.jp
+  [  1 次] besthttpdemosite.azurewebsites.net
+  [  1 次] diosaforce.auer.game.tw
+  [  1 次] erogames.com
+  [  1 次] eroges.com
+  [  1 次] l.cardoz.net
+  [  1 次] login-cq.ecchi.xxx
+  [  1 次] login-eoa.auer.game.tw
+  …… 其余 21 条已省略（用 --limit 调整）
+
+## IP 地址（可能是旧版硬编码服务器）（共 5 条，按出现次数降序，最多显示 60 条）
+
+  [  1 次] 0.0.0.0
+  [  1 次] 119.28.41.111
+  [  1 次] 127.0.0.1
+  [  1 次] 4.0.0.0
+  [  1 次] 8.8.8.8
+
+## 疑似密钥：摘要 / UUID（共 120 条，按出现次数降序，最多显示 60 条）
+
+  [  1 次] 0000000000000000000000000000000000000000000000000000000000000000
+  [  1 次] 00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002
+  [  1 次] 00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000003
+  [  1 次] 000102030405060708090A0B0C0D0E0F101112131415161718191A1B1C1D1E1F
+  [  1 次] 000E0D4D696E6768756151750CC03A4473D03679
+  [  1 次] 002757A1114D696E6768756151755316C05E0BD4
+  [  1 次] 004D696E67687561517512D8F03431FCE63B88F4
+  [  1 次] 00F50B028E4D696E676875615175290472783FB1
+  [  1 次] 06414A97-74F6-488F-877B-A6CA9BBEB82E
+  [  1 次] 1000000000000000000000000000000014DEF9DEA2F79CD65812631A5CF5D3ED
+  [  1 次] 103FAEC74D696E676875615175777FC5B191EF30
+  [  1 次] 1053CDE42C14D696E67687561517533BF3F83345
+  [  1 次] 10B7B4D696E676875615175137C8A16FD0DA2211
+  [  1 次] 10C0FB15760860DEF1EEF4D696E676875615175D
+  [  1 次] 10E723AB14D696E6768756151756FEBF8FCB49A9
+  [  1 次] 1A8F7EDA389B094C2C071E3647A8940F3C123B697578C213BE6DD9E6C8EC7335DCB228FD1EDF4A39152CBCAAF8C0398828041055F94CEEEC7E21340780FE41BD
+  [  1 次] 1C8022EDB0EA4F6AB6DEE7E83010CF16
+  [  1 次] 1C97BEFC54BD7A8B65ACF89F81D4D4ADC565FA45
+  [  1 次] 1E589A8595423412134FAA2DBDEC95C8D8675E58
+  [  1 次] 24B7B137C8A14D696E6768756151756FD0DA2E5C
+  [  1 次] 26DC5C6CE94A4B44F330B5D9BBD77CBF958416295CF7E1CE6BCCDC18FF8C07B6
+  [  1 次] 28E9FA9E9D9F5E344D5A9E4BCF6509A7F39789F515AB8F92DDBCBD414D940E93
+  [  1 次] 2AA058F73A0E33AB486B0F610410C53A7F132310
+  [  1 次] 2AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA984914A144
+  [  1 次] 3045AE6FC8422F64ED579528D38120EAE12196D5
+  [  1 次] 3045AE6FC8422f64ED579528D38120EAE12196D5
+  [  1 次] 3086d221a7d46bcde86c90e49284eb15
+  [  1 次] 31323334353637383132333435363738
+  [  1 次] 31a92ee2029fd10d901b113e990710f0d21ac6b6
+  [  1 次] 340E7BE2A280EB74E2BE61BADA745D97E8F7C300
+  [  1 次] 3DF91610A83441CAEA9863BC2DED5D5AA8253AA10A2EF1C98B9AC8B57F1117A72BF2C7B9E7C1AC4D77FC94CADC083E67984050B75EBAE5DD2809BD638016F723
+  [  1 次] 3FFFFFFF7FFFFFFFBE0024720613B5A3
+  [  1 次] 3FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFC98CDBA46506AB004C33A9FF5147502CC8EDA9E7A769A12694623CEF47F023ED
+  [  1 次] 4099B5A457F9D69F79213D094C4BCD4D4262210B
+  [  1 次] 432d18c9-9348-4b90-bfbf-9f2a10e1f15b
+  [  1 次] 4D696E676875615175985BD3ADBADA21B43A97E2
+  [  1 次] 4E13CA542744D696E67687561517552F279A8C84
+  [  1 次] 5363ad4cc05c30e0a5261c028812645a122e22ea20816678df02967c1b23bd72
+  [  1 次] 5AC635D8AA3A93E7B3EBBD55769886BC651D06B0CC53B0F63BCE3C3E27D2604B
+  [  1 次] 5EEEFCA380D02919DC2C6558BB6D8A5D
+  [  1 次] 5ac635d8aa3a93e7b3ebbd55769886bc651d06b0cc53b0f63bce3c3e27d2604b
+  [  1 次] 662C61C430D84EA4FE66A7733D0B76B7BF93EBC4AF2F49256AE58101FEE92B04
+  [  1 次] 687D1B459DC841457E3E06CF6F5E2517B97C7D614AF138BCBF85DC806C4B289F3E965D2DB1416D217F8B276FAD1AB69C50F78BEE1FA3106EFB8CCBC7C5140116
+  [  1 次] 6b8cf07d4ca75c88957d9d67059037a4
+  [  1 次] 74D59FF07F6B413D0EA14B344B20A2DB049B50C3
+  [  1 次] 7503CFE87A836AE3A61B8816E25450E6CE5E1C93ACF1ABC1778064FDCBEFA921DF1626BE4FD036E93D75E6A50E3A41E98028FE5FC235F5B889A589CB5215F2A4
+  [  1 次] 77E2B07370EB0F832A6DD5B62DFC88CD06BB84BE
+  [  1 次] 7830A3318B603B89E2327145AC234CC594CBDD8D3DF91610A83441CAEA9863BC2DED5D5AA8253AA10A2EF1C98B9AC8B57F1117A72BF2C7B9E7C1AC4D77FC94CA
+  [  1 次] 7A556B6DAE535B7B51ED2C4D7DAA7A0B5C55F380
+  [  1 次] 7B425ED097B425ED097B425ED097B425ED097B425ED097B4260B5E9C7710C864
+  [  1 次] 7CBBBCF9441CFAB76E1890E46884EAE321F70C0BCB4981527897504BEC3E36A62BCDFA2304976540F6450085F2DAE145C22553B465763689180EA2571867423E
+  [  1 次] 7D5A0975FC2C3057EEF67530417AFFE7FB8055C126DC5C6CE94A4B44F330B5D9
+  [  1 次] 7ae96a2b657c07106e64479eac3434e99cf0497512f58995c1396c28719501ee
+  [  1 次] 7d7374168ffe3471b60a857686a19475d3bfa2ff
+  [  1 次] 8000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000006C
+  [  1 次] 8000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000006F
+  [  1 次] 800000000000000000000000000000000000000000000000000000000000000149A1EC142565A545ACFDB77BD9D40CFA8B996712101BEA0EC6346C54374F25BD
+  [  1 次] 809e77d5-56cc-4da8-b9f0-45e65ba9cceb
+  [  1 次] 85E25BFE5C86226CDB12016F7553F9D0E693A268
+  [  1 次] 8CF83642A709A097B447997640129DA299B1A47D1EB3750BA308B0FE64F5FBD3
+  …… 其余 60 条已省略（用 --limit 调整）
+
+## 疑似密钥：含具体关键词的标识符（共 6 条，按出现次数降序，最多显示 60 条）
+
+  [  1 次] ephemeralPrivateKey
+  [  1 次] privateKey
+  [  1 次] saltSize
+  [  1 次] saltString
+  [  1 次] senderPrivateKey
+  [  1 次] staticPrivateKey
+
+## 版本号（共 98 条，按出现次数降序，最多显示 60 条）
+
+  [  1 次] 0.0
+  [  1 次] 0.00
+  [  1 次] 0.12.10
+  [  1 次] 0.6
+  [  1 次] 1.0
+  [  1 次] 1.0.7
+  [  1 次] 1.1
+  [  1 次] 1.1.0
+  [  1 次] 1.1.1
+  [  1 次] 1.1.2
+  [  1 次] 1.12
+  [  1 次] 1.16
+  [  1 次] 1.2
+  [  1 次] 1.2.2
+  [  1 次] 1.2.3
+  [  1 次] 1.22
+  [  1 次] 1.3
+  [  1 次] 1.3.101
+  [  1 次] 1.3.2
+  [  1 次] 1.3.3
+  [  1 次] 1.3.380
+  [  1 次] 1.4
+  [  1 次] 1.4.0
+  [  1 次] 1.4.1
+  [  1 次] 1.4.2
+  [  1 次] 1.42
+  [  1 次] 1.5
+  [  1 次] 1.5.5
+  [  1 次] 1.6
+  [  1 次] 1.8
+  [  1 次] 101.1
+  [  1 次] 101.2
+  [  1 次] 101.3
+  [  1 次] 101.4
+  [  1 次] 102.1
+  [  1 次] 102.2
+  [  1 次] 102.3
+  [  1 次] 102.4
+  [  1 次] 102.5
+  [  1 次] 102.6
+  [  1 次] 103.1
+  [  1 次] 103.2
+  [  1 次] 103.3
+  [  1 次] 103.4
+  [  1 次] 103.5
+  [  1 次] 103.6
+  [  1 次] 104.1
+  [  1 次] 104.10
+  [  1 次] 104.100
+  [  1 次] 104.11
+  [  1 次] 104.12
+  [  1 次] 104.2
+  [  1 次] 104.3
+  [  1 次] 104.4
+  [  1 次] 104.5
+  [  1 次] 104.6
+  [  1 次] 104.7
+  [  1 次] 104.8
+  [  1 次] 104.9
+  [  1 次] 2.0
+  …… 其余 38 条已省略（用 --limit 调整）
+
+==============================================================================
+
+## 出现次数最多的字面量（全量，前 N 条）（共 60 条，按出现次数降序，最多显示 60 条）
+
+  [  1 次] 
+  [  1 次] \x00
+  [  1 次] \x00\x00
+  [  1 次] \x00\x00\x01
+  [  1 次] \x00\x00\x01\t
+  [  1 次] \x00\x00\x01￷
+  [  1 次] \x00\x01\x00\x00
+  [  1 次] \x00\x02\x000:
+  [  1 次] \x00\x04\x00\t\x0e !
+  [  1 次] \x00\t\x0e !
+  [  1 次] \x00\n\x000:A[_`a{İı
+  [  1 次] \x000:
+  [  1 次] \x000:A[_`a{İı
+  [  1 次] \x00
+  [  1 次] \x01\x00
+  [  1 次] \x01\x00\x01
+  [  1 次] \x01\x02\x000:
+  [  1 次] \x01\x04\x00\t\x0e !
+  [  1 次] \x01\n\x000:A[_`a{İı
+  [  1 次] \x08
+  [  1 次] \t
+  [  1 次] \t\n\r\r  
+  [  1 次] \t\n\r\r ퟿�
+  [  1 次] \t\n\r '(),-./0123456789:?ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz
+  [  1 次] \t\x0e !
+  [  1 次] \n
+  [  1 次] \n\n
+  [  1 次] \n\r
+  [  1 次] \n-All scores uploaded!\n
+  [  1 次] \n<color=green>PersonEcho</color>:\n
+  [  1 次] \n<color=green>ScoreTracker using upload channels</color>:\n
+  [  1 次] \n<color=green>ScoreTracker</color>:\n
+  [  1 次] \n<color=green>StreamEcho</color>:\n
+  [  1 次] \n<color=green>UploadWord</color>:\n
+  [  1 次] \nAborting
+  [  1 次] \nEnemyLineupData:
+  [  1 次] \nErr：{0}, {1}
+  [  1 次] \nMagFragAmount : 
+  [  1 次] \nPC=[A][D]Key\nAndroid=Tilt Left/Right
+  [  1 次] \nPos 
+  [  1 次] \nRareFragAmount : 
+  [  1 次] \nUltFragAmount : 
+  [  1 次] \n]
+  [  1 次] \ncall stack:\n
+  [  1 次] \ndepth: 
+  [  1 次] \ndistance: 
+  [  1 次] \neventCamera: 
+  [  1 次] \nindex: 
+  [  1 次] \nmodule.renderOrderPriority: 
+  [  1 次] \nmodule.sortOrderPriority: 
+  [  1 次] \nmodule: 
+  [  1 次] \nrenderOrderPriority: 
+  [  1 次] \nscreenPosition: 
+  [  1 次] \nsortOrderPriority: 
+  [  1 次] \nsortingLayer: 
+  [  1 次] \nsortingOrder: 
+  [  1 次] \nworldNormal: 
+  [  1 次] \nworldPosition: 
+  [  1 次] \n前一個effectID: 
+  [  1 次] \x0c
