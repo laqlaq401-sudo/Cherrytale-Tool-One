@@ -74,16 +74,37 @@
     // 荣耀之巅那份快照的读取时刻（见 loadPlayer：它不再参与常规刷新）
     topPvpAt: "",
     mainStageStatus: null,
+    // ★ 2026-10-18：启动时"信息面板让行"的欠账标记。
+    //
+    // 【为什么需要它】服务端改成**写优先**（见 ``webapi/state.py::run_inline``
+    // 的"让行"说明）：队列里有批在跑/排队时，``/api/player`` 会直接 409。
+    // 启动时若已经交上了自动批，就不能再发 loadPlayer（发一次白挨一个 409，
+    // 面板还会闪"读取失败"）。把"该读一次完整数据"记在这里，等这批跑完由
+    // ``pollOnce`` 的"刚跑完"分支用 ``full=1`` 补读（含荣耀之巅 —— 等价于
+    // 原来 boot 里那次"登录进来的统一读取"）。
+    bootFullPlayerPending: false,
     version: "",
     // ★ 自动任务（2026-09-24）：/api/tasks 带回的游戏日与"下次重置时刻"。
     // "今天跑过没有"完全依赖 gameDay —— 它就是"游戏服务器每天 05:00 换日"
     // 这条规则的**唯一**口径（后端算好，前端只比较字符串）。
     gameDay: "",
     nextReset: "",
-    // ★ 2026-10-04：点了「执行」、但那批任务还没跑完的任务名。
-    // 它们的按钮在执行期间显示成「停止执行」，点下去是中断而不是再跑一次。
-    // 队列跑空（state.running 变 false）时整体清空，按钮自动复原。
-    stopTasks: new Set(),
+    // ★ 2026-10-16 重做：哪些任务"正在执行 / 还在队列里"。
+    //
+    // 【真源在服务端】每次轮询从 ``/api/status`` 的 ``steps`` 里挑出 status 为
+    // pending/running 的步骤 —— 服务端把"正在跑的那一批 + 排队批次的 pending 步骤"
+    // 拼成一条列表给前端（见 ``webapi/state.py`` 的 ``status()``）。前端**不再自己
+    // 记账**：自己记的账刷新页面就丢（这正是旧 ``stopTasks`` 的老毛病），而且
+    // 看不见"不是本页面提交的那一批"。
+    //
+    // 三个字段分工：
+    //   ``activeTasks``   —— 轮询派生的任务名集合（唯一准绳）
+    //   ``activeRunIds``  —— 任务名 → 它所属批次的 run_id（供「精确停止」用）
+    //   ``optimisticRuns``—— 提交成功到下一次轮询之间的**过渡值**，只为"点下去
+    //                        立刻有反馈"；轮询一到就清空（见 pollOnce）
+    activeTasks: new Set(),
+    activeRunIds: new Map(),
+    optimisticRuns: new Set(),
     // ★ 2026-10-04：服务端记录的"本游戏日已自动跑过"的任务名。
     // 它是最重要的那份判重依据 —— 浏览器 localStorage 按 origin 隔离
     // （换端口 / 换窗口就丢），所以真正的账记在服务端
@@ -102,8 +123,54 @@
     // 两者分开：前者让按钮"吃过就灰"，后者让按钮"未到点/已过期"也有明确呈现。
     banquet: null,
     banquetMeals: null,
-    // 已展开的主动任务名。只存内存：刷新页面后一律折叠 ——
-    // 免得"上次点开的那张卡"看起来像"它还在执行/还在排队"。
+    // ★ 2026-10-16：那份"两顿状态"的**失效时刻**（毫秒，服务端给的
+    // ``expires_at``）。超过它就必须重发 32007/32008 —— 否则会拿过期窗口
+    // 回答"现在能不能吃"（用户要的"登录时算一次"是"拉一次然后缓存"，
+    // 因为窗口起止只存在于服务端响应里，本地推不出来）。
+    banquetExpiresAt: 0,
+    // ★ 2026-10-18：宴席时段的读取状态（用户反馈"读取失败刷屏"的落点）。
+    // ``banquetLoading``：有请求在飞（并发锁 —— 开机自动拉 / 展开卡片 /
+    //   点「刷新」可能同时发生，各发一次只会各撞一次 409）；
+    // ``banquetPending``：因为运行中没读到，欠一次"运行结束后自动补读"；
+    // ``banquetRetryAt``：下一次补读的最早时刻（节流，避免自动重试把
+    //   32007/32008 这种风控可见的流量刷出来）；
+    // ``banquetRetryDelay`` / ``banquetRetryCount``：指数退避（5→15→45→60s）
+    //   与次数上限 —— 没有上限时，只要闸门被只读快照长期占着就会无限重试。
+    banquetLoading: false,
+    banquetPending: false,
+    // ★ 2026-10-19：欠读的原因（"busy" = 运行占着闸门 / "timeout" = 读超时）。
+    // 只影响宴席卡头部那行文案 —— 两种情况都靠同一套退避补读，
+    // 但"任务运行中"对超时是在撒谎，必须分开说。
+    banquetPendingReason: "",
+    banquetRetryAt: 0,
+    banquetRetryDelay: 5000,
+    banquetRetryCount: 0,
+    // ★ 2026-10-19：任务清单的"补水"阶段（见 loadTasks / refreshHydratedCards）。
+    // 首帧只等 /api/tasks，候选（活动/素材）与宴席时段随后补 ——
+    // 这段窗口里参数下拉与宴席卡都要如实说"正在读取…"，而不是
+    // "尚无候选 / 尚未读取（点刷新）"，否则用户会以为读失败了。
+    hydrating: false,
+    // ★ 2026-10-18：本轮"信息面板快照 + 主线状态"预计占用闸门的截止时刻。
+    // 它们都是 run_inline，与宴席抢同一把锁；快照在飞时补读必然 409，
+    // 所以在那之前 retryBanquetAfterRun 直接跳过（快照链结束会清零）。
+    snapshotBusyUntil: 0,
+    // ★ 2026-10-16：一键执行的**成员顺序**（服务端 ``task_spec.batch_tasks()``
+    // 排好的名单）。顺序规则只在服务端实现一次，前端照着用 ——
+    // 自己再按 batch_order 排一遍就等于同一套规则写两处，迟早不一致。
+    batchTasks: [],
+    // ★ 2026-10-16：一键执行提交成功后的批次号。它让「停止执行」能
+    // **精确撤掉自己这一批**（可能还在排队，而服务端的 /api/stop 默认
+    // 停的是"正在跑的那一批" —— 那就停错对象了）。
+    batchRunId: null,
+    // 最近一次**提交成功**的批次号（submitRun 写，调用方读）。
+    // ⚠️ 与 ``lastRunId`` 不是一回事：那个是"结果流水已经渲染到哪一批"
+    // （见 renderRunResults），用途完全不同，别合并。
+    submittedRunId: null,
+    // ★ 2026-10-16：已展开的主动任务名。**服务端权威 + 本地兜底**（见
+    // services/ui_prefs.py，随 /api/tasks 的 ui_prefs 下发）。
+    // 以前它只存内存：刷新页面一律折叠，理由是"免得上次点开的那张卡看起来像
+    // 它还在执行/还在排队"。那条理由现在不成立了 —— "在不在执行"由按钮自己的
+    // 「停止执行」红描边态如实表达（而且那个态是从服务端派生的）。
     expanded: new Set(),
     // 「我的角色」分组是否展开全部。同样只存内存：名册动辄上百条，
     // 默认只铺一屏，用户想看全再点开（见 renderInfo 第 ④ 组）。
@@ -175,7 +242,8 @@
 
   //: 「我的角色」分组折叠时**最多铺几个角色**（一行；xl 下网格是 6 列）。
   //:
-  //: 【为什么要有这个数】名册是 5011/1004 拉回来的全量角色，动辄几十上百条。
+  //: 【为什么要有这个数】★ 2026-10-18 起接口只下发 **SSR**（SR / R 已在
+  //: ``/api/player`` 里被挡掉），但 SSR 仍可能有几十条（真机实测 86 个）。
   //: 全铺开时这一栏比它上面三栏加起来还长，把「进度与探索」挤出首屏 ——
   //: 而这张面板叫「角色与资源」，角色只是其中一组，不该霸占整个版面。
   //: 超过这个数就收起来，标题右侧给一个「展开全部（共 N 个）」。
@@ -270,24 +338,54 @@
       renderIdentity();
       renderInfo(); // 用已拿到的 health session 立即更新名片和面板骨架
 
-      // 并行拉取任务清单与玩家数据 —— 但**自动任务不等信息面板**（2026-10-04 修）：
-      // loadPlayer 要串行跑 5 个只读任务（实测 10~30 秒），过去 boot 等它才触发
-      // runAutomation，结果"登录后自动任务迟迟不动"，用户随手拨一个开关
-      // （那条路径不等 loadPlayer）立刻就跑 —— 被误判成自动执行坏了。
-      // collectTasks 只依赖 loadTasks 产出的任务清单与勾选状态。
+      // 拉取任务清单（自动任务唯一的依赖），然后**先把自动任务交上去**。
       const tasksReady = loadTasks();
-      // ★ 登录进来的这次是"统一读取"：连荣耀之巅一起读一次
-      // （之后就以这份快照为准，见 loadPlayer 的说明）。
-      void loadPlayer({ full: true });
       await tasksReady;
-      refreshMainStageStatus();
       // ★「每次启动脚本就自动执行」：进入主界面即触发一次自动任务
       // （今天已经跑过的会被 ranToday 挡掉，所以反复刷新页面不会重复发包）
       await runAutomation("启动");
 
+      // ★ 2026-10-18（让行）：信息面板**排在自动任务之后**。
+      //
+      // 【旧写法为什么不行】过去这里先 ``void loadPlayer({full:true})`` 再提交
+      // 自动任务。后端当时是"先到先得抢闸门"，而 /api/player 要串行跑 6 个
+      // 只读任务（实测 10~30 秒）—— 它几乎必然先抢到，自动任务只能排在后面等，
+      // 表现就是"已受理运行，但第一个任务迟迟不开始"。
+      // 2026-10-04 只去掉了这里的 ``await``，让提交早一点发生，但闸门仍被读占着，
+      // 延迟并没有真正消失。
+      //
+      // 【现在的契约】服务端写优先（RunBusyError 让行）：有批在跑/排队时，
+      // 只读查询直接 409。所以这里分两种情况：
+      //   · 自动批已受理 → 不读，记一笔欠账，等它跑完由 pollOnce 用 full=1 补读；
+      //   · 没有自动批（当天已跑过 / 没勾选）→ 立刻读，此时没人跟它抢。
+      if (state.running) {
+        state.bootFullPlayerPending = true;
+        // 让面板把"任务运行中，结束后自动读取"显示出来（见 renderInfo）。
+        renderInfo();
+      } else {
+        // ★ 登录进来的这次是"统一读取"：连荣耀之巅一起读一次
+        // （之后就以这份快照为准，见 loadPlayer 的说明）。
+        // 主线状态**排在它之后**：两者抢同一把闸门，并行发就是白挨一个 409。
+        void loadPlayer({ full: true, quiet: true }).finally(() => refreshMainStageStatus());
+      }
+
       // 日志常驻：任务与后端动态都在这里看
       await pollOnce();
       schedulePolling();
+
+      // ★ 2026-10-18 兜底：自动批可能在上面的 pollOnce 之前就跑完了
+      // （例如勾选项全被"今天已跑过"挡掉，提交后瞬间收尾）——
+      // 那样 pollOnce 的 wasRunning→idle 迁移永远见不到，欠账会一直挂着。
+      // 这里就地结清：只要已经不忙、且欠着一次完整读取，就补一次。
+      if (state.bootFullPlayerPending && !state.running) {
+        state.bootFullPlayerPending = false;
+        void loadPlayer({ full: true, quiet: true })
+          .then((ok) => {
+            // 还是被让行挡下（别的窗口/别的批在跑）→ 留着欠账，下次再补。
+            if (!ok) state.bootFullPlayerPending = true;
+          })
+          .finally(() => refreshMainStageStatus());
+      }
     } catch (error) {
       if (error.status === 401) {
         // 令牌缺失/失效：清掉坏的，回登录页重新填
@@ -343,9 +441,89 @@
   }
 
   /**
+   * 界面图标的唯一字典：**与顶栏 / 侧栏导航同一套线性语言** ——
+   * 24×24 视框、`stroke-width 1.8`、圆头圆角、`stroke: currentColor`。
+   *
+   * 【为什么统一换成内联 SVG（2026-10-18 用户拍板全量统一）】
+   * 原来的任务图标和指标图标是原游戏素材：厚描边 + 渐变 + 高光。问题有三：
+   * ① 与导航那排线性图标是两套语言，同屏看着像两个产品；
+   * ② 26px 的方框里塞几十条细节，缩小就糊成一团（船舵、旗帜最明显）；
+   * ③ 必须垫一层圆角灰底 + 投影才能压住彩色，深色卡片上发脏。
+   * 线性图标缩小不糊、颜色随文字自动适配深浅主题、零额外请求。
+   * 原 PNG 全部保留在 ``web/assets/icons/`` 下，回滚只需还原本文件与 input.css。
+   *
+   * 键名是**语义**而不是文件名 —— 同一个图标被多处复用（如 swords 既给
+   * 「天梯竞技场」任务、也给「竞技次数」指标卡），改一处两边同时生效。
+   * 值是一段 SVG 内胆（只含子元素，外层的 svg 属性由 ``iconSvg`` 统一加）。
+   */
+  const ICON_PATHS = {
+    // —— 任务卡片 ——
+    mail: '<rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="M3.8 7.3 12 12.8l8.2-5.5"/>',
+    gift: '<path d="M3.5 8.5h17V11h-17z"/><path d="M5 11v7.4A2.6 2.6 0 0 0 7.6 21h8.8a2.6 2.6 0 0 0 2.6-2.6V11"/><path d="M12 8.5V21"/><path d="M12 8.5C11 5.6 9.4 4.4 8.1 5.1 6.9 5.8 7.6 8.5 12 8.5z"/><path d="M12 8.5c1-2.9 2.6-4.1 3.9-3.4 1.2.7.5 3.4-3.9 3.4z"/>',
+    // ★ 2026-10-18：好友赠礼「领取」专用 —— 礼盒 + 向下的箭头（"收进来"）。
+    // 不复用 gift：它与「特惠礼包免费领取」在同一组并排，撞图会分不清。
+    gift_in: '<path d="M3.5 8.5h17V11h-17z"/><path d="M5 11v7.4A2.6 2.6 0 0 0 7.6 21h8.8a2.6 2.6 0 0 0 2.6-2.6V11"/><path d="M12 8.5v7.2"/><path d="M9.9 13.6 12 15.7l2.1-2.1"/><path d="M12 8.5C11 5.6 9.4 4.4 8.1 5.1 6.9 5.8 7.6 8.5 12 8.5z"/><path d="M12 8.5c1-2.9 2.6-4.1 3.9-3.4 1.2.7.5 3.4-3.9 3.4z"/>',
+    calendar_check: '<rect x="3" y="5" width="18" height="15" rx="2.5"/><path d="M8 3v4M16 3v4M3 10h18"/><path d="M9 14.4l2 2 4-4"/>',
+    pickaxe: '<path d="M4 20.5 14.2 8.8"/><path d="M8.8 7.6c3.2-1.6 6.6-.8 8.8 1.8"/><path d="M17.4 6.2 19.6 8.6 17 9.9z"/>',
+    users: '<circle cx="8.6" cy="8" r="3"/><circle cx="16.8" cy="9.6" r="2.3"/><path d="M3 20.5c0-3.1 2.5-5.6 5.6-5.6s5.6 2.5 5.6 5.6"/><path d="M14.8 20.5c0-2.2 1.6-4 3.7-4s3.5 1.6 3.5 3.7"/>',
+    coin_give: '<circle cx="12" cy="9" r="5.5"/><path d="M12 6.2v5.6M9.2 9h5.6"/><path d="M4 16.6c2.3 2 5 3 8 3s5.7-1 8-3"/>',
+    compass: '<circle cx="12" cy="12" r="9"/><path d="M15.6 8.4 13.2 13.2 8.4 15.6l2.4-4.8z"/>',
+    chest: '<path d="M3 10h18v8a2.6 2.6 0 0 1-2.6 2.6H5.6A2.6 2.6 0 0 1 3 18z"/><path d="M3 10l1.8-4.3a1.6 1.6 0 0 1 1.5-1h11.4a1.6 1.6 0 0 1 1.5 1L21 10"/><path d="M9.9 13.4h4.2v3.2H9.9z"/>',
+    map: '<path d="M9 3.5 3.5 5.5v15l5.5-2 6 2 5.5-2v-15l-5.5 2z"/><path d="M9 3.5v15M15 5.5v15"/>',
+    flame: '<path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.4-.5-2-1-3-1.1-2.1-.2-4 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.2.4-2.3 1-3a2.5 2.5 0 0 0 2.5 2.5z"/>',
+    bag: '<path d="M5.6 8h12.8l1.2 11.4a1.6 1.6 0 0 1-1.6 1.6H6a1.6 1.6 0 0 1-1.6-1.6z"/><path d="M9 8V6.2a3 3 0 0 1 6 0V8"/>',
+    flag: '<path d="M6 21V3.5"/><path d="M6 4h11.4l-2.2 4.3 2.2 4.2H6"/>',
+    swords: '<path d="M4.5 3.5 19.8 18.8M19.5 3.5 4.2 18.8"/><path d="M3.2 20.8l3.4-3.4M20.8 20.8l-3.4-3.4"/><path d="M3.2 3.4 6.8 4.3 4.2 7z"/><path d="M20.8 3.4 17.2 4.3 19.8 7z"/>',
+    hexstar: '<path d="M12 3.2 19.6 7.6v8.8L12 20.8 4.4 16.4V7.6z"/><path d="M12 8l3 4-3 4-3-4z"/>',
+    flask: '<path d="M9.2 3h5.6"/><path d="M10.3 3v6.6L4.9 18.1A2 2 0 0 0 6.6 21.1h10.8a2 2 0 0 0 1.7-3L13.7 9.6V3"/><path d="M7.6 15.2h8.8"/>',
+    skull: '<path d="M12 3a7.6 7.6 0 0 0-7.6 7.6c0 2.7 1.3 4.5 3.1 5.6v2.6A2.2 2.2 0 0 0 9.7 21h4.6a2.2 2.2 0 0 0 2.2-2.2v-2.6c1.8-1.1 3.1-2.9 3.1-5.6A7.6 7.6 0 0 0 12 3z"/><circle cx="9.4" cy="10.4" r="1.4"/><circle cx="14.6" cy="10.4" r="1.4"/><path d="M11 14.6v1.1M13 14.6v1.1"/>',
+    cutlery: '<path d="M6.6 3v6.4a2.2 2.2 0 0 0 4.4 0V3"/><path d="M8.8 3v18"/><path d="M17.6 3c-1.8 0-3 2.2-3 4.8V12h3v9"/>',
+    bolt_plus: '<path d="M12.4 3 5 13.2h5.1L9 21l8-10.8h-5.2z"/><path d="M18.4 3.4v4M16.4 5.4h4"/>',
+    stage: '<path d="M3 20.5h5v-5h5v-5h5"/><path d="M18 10.5V4"/><path d="M18 4h3.6l-1.1 2.2 1.1 2.2H18"/>',
+    check_circle: '<circle cx="12" cy="12" r="9"/><path d="M8 12.4l2.6 2.6L16 9.6"/>',
+    card_star: '<rect x="4.5" y="3.5" width="13" height="17" rx="2.5"/><path d="M8 3.5h6"/><path d="M11 8l1.3 2.7 2.9.4-2.1 2 .5 2.9L11 14.6 8.4 16l.5-2.9-2.1-2 2.9-.4z"/>',
+    // —— 只读 / 状态类任务（2026-10-18 一并补齐：同列卡片不再有图标缺席） ——
+    switch_account: '<path d="M4 8h13"/><polyline points="14 5 17 8 14 11"/><path d="M20 16H7"/><polyline points="10 13 7 16 10 19"/>',
+    wallet: '<rect x="3" y="6" width="18" height="13" rx="2.5"/><path d="M3 10.2h18"/><path d="M16.2 14.6h1.8"/>',
+    roster: '<circle cx="8.6" cy="8.6" r="3.2"/><path d="M3 20c0-3.1 2.5-5.6 5.6-5.6S14.2 16.9 14.2 20"/><path d="M15.6 6.6h5.2M15.6 10.4h5.2M15.6 14.2h3.4"/>',
+    plug: '<path d="M8 9V3.5M16 9V3.5"/><path d="M5.5 9h13v3.6A6.5 6.5 0 0 1 12 19a6.5 6.5 0 0 1-6.5-6.4z"/><path d="M12 19v2"/>',
+    checklist: '<path d="M4 6.6 5.7 8.3 8.4 5.4"/><path d="M11.4 6.9h9"/><path d="M4 12.6 5.7 14.3 8.4 11.4"/><path d="M11.4 12.9h9"/><path d="M4 18.6 5.7 20.3 8.4 17.4"/><path d="M11.4 18.9h9"/>',
+    // —— 指标卡 / 玩家名片专属 ——
+    shield: '<path d="M12 3.2 5 6v5.8c0 4.4 2.9 7.4 7 8.9 4.1-1.5 7-4.5 7-8.9V6z"/>',
+    backpack: '<path d="M5.5 9.5h13v8.5a2.5 2.5 0 0 1-2.5 2.5H8a2.5 2.5 0 0 1-2.5-2.5z"/><path d="M9 9.5V7.5a3 3 0 0 1 6 0v2"/><path d="M5.5 13.5h13"/>',
+    coin: '<circle cx="12" cy="12" r="8.5"/><path d="M14.6 9.4a3.7 3.7 0 1 0 0 5.2"/>',
+    gem: '<path d="M7 3.4h10l4 6.1L12 20.8 3 9.5z"/><path d="M3 9.5h18"/>',
+    user: '<circle cx="12" cy="8.5" r="3.6"/><path d="M4.8 20.5c0-3.7 3.2-6.6 7.2-6.6s7.2 2.9 7.2 6.6"/>',
+    trophy: '<path d="M8 3.5h8v6a4 4 0 0 1-8 0z"/><path d="M8 5.5H5.2v1.3A3 3 0 0 0 8.2 9.8"/><path d="M16 5.5h2.8v1.3a3 3 0 0 1-3 3"/><path d="M12 13.5V17"/><path d="M8.5 20.5h7l-.8-3h-5.4z"/>',
+    globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><ellipse cx="12" cy="12" rx="4" ry="9"/>',
+    bolt: '<path d="M13 2.8 5.6 13.6H11L9.6 21.2 17.2 10.4H11.6z"/>',
+  };
+
+  /**
+   * 造一个图标元素；``key`` 不在 ICON_PATHS 里时返回 null（调用方当"没图标"处理）。
+   *
+   * :param size: 显式写在 svg 上的是**兜底**尺寸 —— 正式尺寸由 class 决定
+   *   （任务卡 20px / 玩家名片 14px）。CSS 还没加载完时不至于是 0×0 的空白。
+   */
+  function iconSvg(key, className, size = 20) {
+    const body = ICON_PATHS[key];
+    if (!body) return null;
+    // SVG 必须落在 SVG 命名空间：``document.createElement("svg")`` 在 HTML
+    // 文档里拿到的是未知元素，画不出来。交给 innerHTML 让解析器走 SVG 分支；
+    // 内容是上方常量，不接受任何外部输入，不存在注入面。
+    const host = document.createElement("span");
+    host.innerHTML = `<svg class="${className}" viewBox="0 0 24 24" width="${size}" height="${size}" `
+      + `fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" `
+      + `stroke-linejoin="round" aria-hidden="true">${body}</svg>`;
+    return host.firstElementChild;
+  }
+
+  /**
    * 一张统计卡（2026-09-30 增加图标与配色档位）。
    *
-   * :param icon: emoji 图标（装饰用，标记 aria-hidden，读屏不念）。
+   * :param icon: ICON_PATHS 的键（线性 SVG）或 emoji 文本（装饰用，标记
+   *   aria-hidden，读屏不念）。旧写法 ``assets/…png`` 仍能渲染，纯属兜底 ——
+   *   2026-10-18 起所有调用点都已改成键名。
    * :param tone: 值的配色档位（"gold" | "diamond" | "stamina" | "power"），
    *   由 styles.css 的 `.stat--<tone>` 决定颜色；缺省用默认前景色。
    *   【为什么放前端而不是后端】这是"数字重要程度的表达方式"，不是数据
@@ -354,7 +532,10 @@
   function statCard(label, value, hint, { icon = "", tone = "", extraClass = "" } = {}) {
     let iconEl = null;
     if (icon) {
-      if (icon.includes("/") || icon.endsWith(".png")) {
+      if (ICON_PATHS[icon]) {
+        iconEl = iconSvg(icon, "stat-icon-svg");
+      } else if (icon.includes("/") || icon.endsWith(".png")) {
+        // 兜底：漏改的旧调用点（PNG 路径）仍能显示，不至于整张卡丢图标。
         iconEl = el("img", { class: "stat-icon-img", src: icon, alt: "", "aria-hidden": "true" });
       } else {
         iconEl = el("span", { class: "stat-icon", text: icon, "aria-hidden": "true" });
@@ -406,11 +587,11 @@
           el("div", { class: "hero-player-name", text: name || (hasData ? "（未进过区）" : "读取中…") }),
           el("div", { class: "hero-tags" }, [
             el("span", { class: "hero-tag" }, [
-              el("img", { src: "assets/icons/stats/server.png", alt: "" }),
+              iconSvg("globe", "hero-tag-ico", 14),
               el("span", { text: session.server_name ? `#${session.server_id} ${session.server_name}` : (hasData ? "未连接区服" : "区服读取中…") }),
             ]),
             el("span", { class: "hero-tag" }, [
-              el("img", { src: "assets/icons/stats/alliance.png", alt: "" }),
+              iconSvg("shield", "hero-tag-ico", 14),
               el("span", { text: arena.alliance_name || (hasData ? "无公会" : "公会读取中…") }),
             ]),
           ]),
@@ -418,7 +599,7 @@
       ]),
       el("div", { class: "hero-power-box" }, [
         el("span", { class: "hero-power-label" }, [
-          el("img", { class: "stat-icon-img", src: "assets/icons/stats/power.png", alt: "" }),
+          iconSvg("trophy", "stat-icon-svg"),
           el("span", { text: "综合战力" }),
         ]),
         el("span", { class: "hero-power-val", text: formatNumber(arena.my_fighting) }),
@@ -429,9 +610,9 @@
     // ② 分组一：核心资产（金币 / 钻石 / 体力）
     const assetTitle = el("div", { class: "stat-group-title", text: "核心资产" });
     const assetGrid = el("div", { class: "stat-grid stat-grid--assets" }, [
-      statCard("游戏金币", formatNumber(game.coins), "", { icon: "assets/icons/stats/coin.png", tone: "gold", extraClass: "stat--asset" }),
-      statCard("钻石", formatNumber(game.diamonds), "", { icon: "assets/icons/stats/diamond.png", tone: "diamond", extraClass: "stat--asset" }),
-      statCard("体力", formatNumber(game.stamina), "", { icon: "assets/icons/stats/stamina.png", tone: "stamina", extraClass: "stat--asset" }),
+      statCard("游戏金币", formatNumber(game.coins), "", { icon: "coin", tone: "gold", extraClass: "stat--asset" }),
+      statCard("钻石", formatNumber(game.diamonds), "", { icon: "gem", tone: "diamond", extraClass: "stat--asset" }),
+      statCard("体力", formatNumber(game.stamina), "", { icon: "bolt", tone: "stamina", extraClass: "stat--asset" }),
     ]);
     grid.appendChild(assetTitle);
     grid.appendChild(assetGrid);
@@ -448,10 +629,10 @@
       ? `积分 ${pointsVal}｜${topPvpHint}`
       : topPvpHint;
     const dailyGrid = el("div", { class: "stat-grid stat-grid--daily" }, [
-      statCard("竞技次数", formatNumber(arena.challenge_count), arena.buyed_count ? `已购 ${formatNumber(arena.buyed_count)} 次` : "", { icon: "assets/icons/stats/arena.png" }),
-      statCard("天命对决次数", formatNumber(wudou.challenge_times), (hasData && wudou.my_ranking != null) ? `名次 ${formatNumber(wudou.my_ranking)}｜NPC ${formatNumber(wudou.npc_times)}` : "", { icon: "assets/icons/stats/wudou.png" }),
-      statCard("失控炼成阵次数", formatNumber(yimo.remain_count), (hasData && yimo.now_score != null) ? `积分 ${formatNumber(yimo.now_score)}｜排名 ${formatNumber(yimo.now_rank)}` : "", { icon: "assets/icons/stats/yimo.png" }),
-      statCard("荣耀之巅", rankText, subText, { icon: "assets/icons/stats/top_pvp_rank.png", tone: "power" }),
+      statCard("竞技次数", formatNumber(arena.challenge_count), arena.buyed_count ? `已购 ${formatNumber(arena.buyed_count)} 次` : "", { icon: "swords" }),
+      statCard("天命对决次数", formatNumber(wudou.challenge_times), (hasData && wudou.my_ranking != null) ? `名次 ${formatNumber(wudou.my_ranking)}｜NPC ${formatNumber(wudou.npc_times)}` : "", { icon: "hexstar" }),
+      statCard("失控炼成阵次数", formatNumber(yimo.remain_count), (hasData && yimo.now_score != null) ? `积分 ${formatNumber(yimo.now_score)}｜排名 ${formatNumber(yimo.now_rank)}` : "", { icon: "skull" }),
+      statCard("荣耀之巅", rankText, subText, { icon: "trophy", tone: "power" }),
     ]);
     grid.appendChild(dailyTitle);
     grid.appendChild(dailyGrid);
@@ -460,8 +641,8 @@
     const mainStage = player.main_stage || state.mainStageStatus || {};
     const progTitle = el("div", { class: "stat-group-title", text: "进度与探索" });
     const progGrid = el("div", { class: "stat-grid stat-grid--progress" }, [
-      statCard("最高主线通关", mainStage.highest_passed_desc || "—", mainStage.next_section_desc ? `下一关：${mainStage.next_section_desc}` : "", { icon: "assets/icons/stats/stage.png", tone: "stamina" }),
-      statCard("背包条目", formatNumber(game.item_count), hasData ? "道具总种类数" : "", { icon: "assets/icons/stats/backpack.png" }),
+      statCard("最高主线通关", mainStage.highest_passed_desc || "—", mainStage.next_section_desc ? `下一关：${mainStage.next_section_desc}` : "", { icon: "stage", tone: "stamina" }),
+      statCard("背包条目", formatNumber(game.item_count), hasData ? "道具总种类数" : "", { icon: "backpack" }),
     ]);
     grid.appendChild(progTitle);
     grid.appendChild(progGrid);
@@ -472,11 +653,22 @@
     // ★ 必须显示"这份数据是什么时候/从哪来的"：实时名册与登录快照的**新鲜度
     //   完全不同**，不说清楚用户会以为数字是实时的，从而怀疑数据不对
     //   （与荣耀之巅那张卡片同一套做法）。
+    // ★ 2026-10-18：接口下发的 ``items`` **已经只含 SSR**（SR / R 在
+    //   ``/api/player`` 里就被挡掉了，见 ``webapi/app.py::player_info``）。
+    //   前端不做任何稀有度判断 —— 那要读配置表，属于后端口径。
+    //   只有一个例外要在这里说：``rarity_filter === "unavailable"``
+    //   表示属性表没读到、后端 fail-open 全量透出，必须明示"这次没过滤"。
     const roleItems = Array.isArray(roles.items) ? roles.items : [];
     const roleSourceText = roles.source === "live"
       ? "实时名册"
       : (roles.source === "snapshot" ? "登录快照" : "");
-    // ★ 2026-10-06：名册是**全量**角色（5011 / 1004），几十上百条。
+    const roleFilterWarn = roles.rarity_filter === "unavailable"
+      ? "角色属性表没读到，本次未按品质过滤"
+      : "";
+    const roleHint = [roleSourceText ? `来源：${roleSourceText}` : "", roleFilterWarn]
+      .filter(Boolean)
+      .join("｜");
+    // ★ 2026-10-06：列表可能很长（接口过滤后实测仍有 86 个 SSR）。
     //   全铺开会把这一栏撑得比上面三组加起来还长，把「进度与探索」挤出首屏。
     //   所以默认只铺一屏（前 ROLE_PREVIEW_LIMIT 个），其余收在标题右侧的
     //   「展开全部」后面；条数不超过一屏时没有折叠的必要，按钮不出现。
@@ -484,6 +676,16 @@
     const roleCollapsible = roleTotal > ROLE_PREVIEW_LIMIT;
     const rolesExpanded = roleCollapsible ? state.rolesExpanded : true;
     const roleShown = rolesExpanded ? roleItems : roleItems.slice(0, ROLE_PREVIEW_LIMIT);
+    // 空态（★ 2026-10-18）：有角色但一个 SSR 都没有（例如新号只有 R）。
+    // 只剩一张「SSR 角色 0」卡片会让人以为面板坏了 —— 明说一句"是全空
+    // 还是被过滤空了"。``total_count`` 缺失（旧接口）时不猜，宁可不显示。
+    const roleTotalCount = Number(roles.total_count || 0);
+    const roleEmpty = hasData && roleTotal === 0 && roleTotalCount > 0
+      ? el("div", {
+          class: "role-empty",
+          text: `没有 SSR 角色（全名册 ${formatNumber(roleTotalCount)} 个都不是 SSR）`,
+        })
+      : null;
 
     const roleTitle = el("div", { class: "stat-group-head" }, [
       el("div", { class: "stat-group-title", text: "我的角色" }),
@@ -504,11 +706,13 @@
         : null,
     ]);
     const roleGrid = el("div", { class: "stat-grid stat-grid--roles" }, [
+      // 卡片口径（2026-10-18 用户拍板）：**只显示 SSR 数**，不摆全量、
+      // 也不摆"已排除几个" —— 数字就是指列表里这些角色。
       statCard(
-        "角色数量",
+        "SSR 角色",
         hasData ? formatNumber(roles.count) : "—",
-        roleSourceText ? `来源：${roleSourceText}` : (hasData ? "暂无角色数据" : "读取中…"),
-        { icon: "assets/icons/stats/player.png" },
+        roleHint || (hasData ? "暂无角色数据" : "读取中…"),
+        { icon: "user" },
       ),
       ...roleShown.map((role) =>
         el("div", {
@@ -541,6 +745,7 @@
           }),
         ]),
       ),
+      roleEmpty,
     ]);
     grid.appendChild(roleTitle);
     grid.appendChild(roleGrid);
@@ -549,7 +754,11 @@
     if (updateEl) {
       updateEl.textContent = hasData
         ? `上次刷新：${new Date().toLocaleTimeString("zh-CN")}`
-        : "数据读取中…";
+        : // ★ 2026-10-18：启动时信息面板给自动任务让行，整批跑完才读 ——
+          // 空面板要自己说明原因，否则看起来像"信息展示坏了"。
+          state.bootFullPlayerPending
+          ? "任务运行中，结束后自动读取"
+          : "数据读取中…";
     }
     const button = $("btn-refresh-info");
     if (button) {
@@ -569,6 +778,10 @@
    * 拉一次「信息展示」快照。
    *
    * :param full: 是否**连带读取荣耀之巅**（``/api/player?full=1``）。
+   * :param quiet: 409（任务正在跑，服务端只读让行）是否**静默**。
+   *   自动路径（启动补读 / 运行结束补读）传 ``True`` —— 那是预期内的让行，
+   *   不是故障，弹提示只会让"每次跑完都闪一下"；用户手点「刷新」时传 ``False``，
+   *   给一句 toast，免得"点了没反应"。
    *
    * 【★ 2026-10-04：荣耀之巅默认不再跟着读】
    * 以前这份快照里固定带着荣耀之巅的只读任务，而"每次运行结束"都会自动刷一次
@@ -581,7 +794,7 @@
    * 看起来像"数据丢了"。保留上次读到的值（它是登录那一刻的真值），
    * 卡片上另有说明它的读取时刻。
    */
-  async function loadPlayer({ full = false } = {}) {
+  async function loadPlayer({ full = false, quiet = false } = {}) {
     const button = $("btn-refresh-info");
     if (button) {
       button.disabled = true;
@@ -609,12 +822,22 @@
         renderIdentity();
       }
       renderInfo();
+      return true;
     } catch (error) {
+      if (error.status === 409) {
+        // ★ 2026-10-18：让行 —— 服务端有批在跑/排队时，只读查询会被拒绝。
+        // 这不是故障：那批跑完 pollOnce 会自动用 full=1 补读一次。
+        // 自动路径保持静默（否则每次跑完都闪一下提示），手点刷新才说一句。
+        if (!quiet) showToast("任务正在执行，信息面板会在运行结束后自动刷新");
+        console.info("信息面板让行：任务正在执行，稍后自动补读", describeError(error));
+        return false;
+      }
       const box = $("info-errors");
       if (box) {
         box.textContent = `读取失败：${describeError(error)}`;
         box.classList.remove("hidden");
       }
+      return false;
     } finally {
       if (button) {
         button.disabled = false;
@@ -692,6 +915,54 @@
         });
       } catch (error) {
         console.warn("任务勾选状态没能保存到服务端：", describeError(error));
+      }
+    }, 500);
+  }
+
+  // ------------------------------------------------------------------
+  // 展开状态：本地兜底 + 服务端权威（★ 2026-10-16）
+  //
+  // 【为什么也要搬到服务端】理由与 selection / 钻石总闸**完全相同**：
+  // EXE 窗口走 Edge --app，profile 在 tmp/ 下，一清理存储就丢；换端口 / 换壳
+  // 之间 localStorage 也互不相通。而"上次点开的卡片还开着"是用户看得见的
+  // 界面记忆，丢了会让人觉得工具"记不住东西"。
+  //
+  // 【为什么要防抖】展开/折叠是连点动作（用户会把好几张卡依次点开），
+  // 500ms 内的连续变更合并成一次 POST（提交的永远是 state.expanded 全量）。
+  //
+  // 【失败为什么只 console.warn 而不弹窗】它只是界面记忆，丢了最坏结果是
+  // "刷新后收起"，没有安全方向；只有钻石总闸那种"花钱的闸"才必须弹窗可见。
+  // ------------------------------------------------------------------
+  function readStoredExpanded() {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEYS.uiPrefs);
+      const list = raw ? JSON.parse(raw) : [];
+      return new Set(
+        Array.isArray(list) ? list.filter((name) => typeof name === "string") : []
+      );
+    } catch {
+      // 存坏了就当没有：界面偏好丢了无所谓，绝不能因此让页面打不开
+      return new Set();
+    }
+  }
+
+  let expandedSyncTimer = null;
+  function saveExpandedPrefs() {
+    try {
+      localStorage.setItem(STORAGE_KEYS.uiPrefs, JSON.stringify([...state.expanded]));
+    } catch {
+      /* 隐私模式 / 存储被禁用时忽略 */
+    }
+    if (expandedSyncTimer) clearTimeout(expandedSyncTimer);
+    expandedSyncTimer = setTimeout(async () => {
+      expandedSyncTimer = null;
+      try {
+        await call("/api/ui_prefs", {
+          method: "POST",
+          body: { expanded: [...state.expanded] },
+        });
+      } catch (error) {
+        console.warn("展开状态没能保存到服务端：", describeError(error));
       }
     }, 500);
   }
@@ -829,11 +1100,96 @@
   // ------------------------------------------------------------------
   // 渲染：自动任务 / 主动任务 / 钻石视图
   // ------------------------------------------------------------------
+  /**
+   * 只刷新"由任务/参数派生出来的那几块"，**不重建任务卡片**。
+   *
+   * 【★ 2026-10-16：为什么需要它】
+   * 以前改一个下拉、勾一个框都会调 renderTaskGroups() 整组重建 —— 代价不只是慢：
+   * 别的卡片上「停止执行」的按钮会被重建成常态「执行」（就是这次的闪烁 bug），
+   * 滚动位置也会跳。真正需要跟着变的其实只有钻石视图与三处状态行。
+   * 现在的口径是"哪里真的变了就只改哪里"：单张卡片用 refreshCard()，
+   * 全局派生视图用这个。
+   */
+  function refreshDerivedViews() {
+    renderDiamondList();
+    renderAutoStatus();
+    // ★ 2026-10-16：一键执行的状态行（"已勾选几个 / 会跑哪些"）也要跟着重建
+    renderManualBatchStatus();
+  }
+
+  /**
+   * 重建**单张卡片**的参数区并重新施加它的展开态（不动别的卡片）。
+   *
+   * 【什么时候必须重建参数区】
+   * 参数区的选项是"快照"式的：下拉里的候选来自 ``state.activityOptions`` /
+   * ``state.materialTree``。这些数据是异步到的（更新区域 / 加载素材目录），
+   * 到位之后不重造 DOM 的话，下拉里还是旧选项 —— 所以这一类变化必须刷新，
+   * 但**只需要刷新那一张卡片**。
+   *
+   * :return: 是否找到了该卡片；找不到（例如它当前被过滤掉了）返回 ``False``，
+   *     调用方可以退回整组重建。
+   */
+  function refreshCard(taskName) {
+    const card = cardElementFor(taskName);
+    const task = state.views.get(taskName);
+    const entry = state.selection.get(taskName);
+    if (!card || !task || !entry) return false;
+    const isExpandable = task.group === "manual" || task.group === "diamond";
+    const bodyOpen = isExpandable ? state.expanded.has(taskName) : Boolean(entry.checked);
+    const old = card.querySelector(".task-params");
+    if (old) old.replaceWith(paramsBoxFor(task, entry, bodyOpen));
+    else card.append(paramsBoxFor(task, entry, bodyOpen));
+    // 参数区换了新节点后把展开态重新施加一遍（顺带按最新状态重造执行控件）
+    applyCardBodyOpen(card, task, bodyOpen);
+    return true;
+  }
+
+  /**
+   * 补水完成后，只重画"依赖异步候选数据"的卡片（★ 2026-10-19）。
+   *
+   * 【它解决什么】
+   * `loadTasks()` 现在先调 `renderTaskGroups()` 出首帧（只等 `/api/tasks`），
+   * 再依次补活动候选 / 素材目录 / 宴席时段。补水只影响两类东西：
+   *   ① 参数里带 ``options_source`` 的下拉（活动区域/关卡、素材区域/关卡）；
+   *   ② 宴席卡的两顿状态 —— 它自带 ``syncBbqPanel()`` 就地更新，这里只需补一次
+   *      文案（``state.hydrating`` 从"正在读取…"切回真实状态）。
+   * 其余卡片首帧时就已经是最终形态；重画它们只会换来闪烁与滚动跳动
+   * （见 notes/exec_button_flicker_plan.md 的教训）。
+   *
+   * 【为什么找不到卡片时要整组重建】
+   * `refreshCard()` 在卡片被过滤/容器未就绪时返回 false。补水阶段理论上不会
+   * 发生，但真发生了（例如将来加了分组过滤）就得兜住 —— 宁可多画一次，
+   * 也不能让下拉永远停在"（正在读取…）"。
+   */
+  function refreshHydratedCards() {
+    let missed = false;
+    for (const task of state.tasks) {
+      if (task.hidden) continue;
+      const needsOptions = (task.params || []).some((param) => param.options_source);
+      if (!needsOptions) continue;
+      if (!refreshCard(task.name)) missed = true;
+    }
+    if (missed) {
+      renderTaskGroups();
+      return;
+    }
+    // 宴席卡不在上面的名单里（参数没有 options_source）——单独补一次文案。
+    syncBbqPanel(cardElementFor("bbq_energy"));
+    refreshDerivedViews();
+  }
+
   function renderTaskGroups() {
     renderTaskGroup("tasks-auto", "auto");
     renderTaskGroup("tasks-manual", "manual");
-    renderDiamondList();
-    renderAutoStatus();
+    renderTaskGroup("tasks-diamond", "diamond");
+    refreshDerivedViews();
+    // ★ 2026-10-16：整组重建之后补一次状态重放。
+    // **正常情况用不着** —— 上面的 renderTask 在造按钮时就已经施加过状态
+    // （见 applyExecButtonState，那才是"展开不闪"的真正修复点）。留着它是
+    // 给"将来有人往渲染里加一条新路径"兜底，成本只是遍历一遍按钮。
+    // ⚠️ 别把它当成依赖：谁要是把渲染路径的状态施加删掉，只靠这一句会退化成
+    // "重建后补一次"的老写法 —— 那正是本次要根除的模式。
+    syncExecButtons();
   }
 
   function renderTaskGroup(containerId, groupKey) {
@@ -849,72 +1205,308 @@
     for (const task of members) container.appendChild(renderTask(task));
   }
 
+  // ------------------------------------------------------------------
+  // 主动任务「一键执行」（★ 2026-10-16 用户需求）
+  //
+  // 【它到底是什么】
+  // 把勾上的主动任务**按顺序拼成一次** ``/api/run`` 提交，每个任务后面
+  // 照抄单卡执行的拼法各跟一个 ``daily_box``（宴席除外 —— 它的专用按钮
+  // 刻意不串宝箱，语义要单一）。之所以必须"一次提交"而不是"逐个点执行"：
+  // 服务端的 ``/api/stop`` 只中断**当前那一批**，队列里其他批次照跑；
+  // 分成 N 批的话，用户点「停止执行」只能停掉手上那一件，
+  // 后面排着的 5 批照跑 —— 而他要的是"从当前任务开始，后面全都别跑"。
+  // ------------------------------------------------------------------
+
+  /**
+   * 本次一键执行**真正会提交**的任务名（按服务端给的顺序）。
+   *
+   * 【为什么"勾选"与"会跑"要分开算】
+   * 勾选是"意愿"，会跑是"此刻的结论"：工会捐献今天已经捐过、宴席这一顿
+   * 已经吃过，都不该再提交。状态行与按钮上的数字都必须用**后者**，
+   * 否则会出现"显示将执行 3 个、实际只跑 2 个"这种让人以为漏跑了的错觉。
+   *
+   * 【"今天已捐过"为什么不写死任务名】
+   * 判据用的是 ``view.once_per_day && state.autoDone.has(name)`` ——
+   * 服务端已经把这套"每日一次"的账本下发了（``auto_done``），
+   * 前端照读即可。写死 ``alliance_donate`` 就等于把名单抄了一份到 JS 里，
+   * 将来再有一个"每天一次"的手动任务就会被漏掉。
+   */
+  function batchSelectionSummary() {
+    //: 勾选且可批量的（含"本游戏日已经做过"的）。
+    const checked = [];
+    //: 其中此刻**真的会跑**的。
+    const runnable = [];
+    //: 勾了但本游戏日已记账（目前只有工会捐献）→ 状态行要说清楚。
+    const done = [];
+    for (const name of state.batchTasks) {
+      const view = state.views.get(name);
+      if (!view || view.hidden || !view.enabled || !view.batch_eligible) continue;
+      const entry = state.selection.get(name);
+      if (!entry || !entry.checked) continue;
+      checked.push(name);
+      if (view.once_per_day && state.autoDone.has(name)) done.push(name);
+      else runnable.push(name);
+    }
+    return { checked, runnable, done };
+  }
+
+  /**
+   * 宴席在一键执行里要提交哪几顿（``["morning"]`` / ``["evening"]`` / 两者 / ``[]``）。
+   *
+   * 【判据与卡片按钮完全一致（这是刻意的）】
+   * 复用 ``bbqMealPanel`` 里那套"能不能点"的结论：没吃过、且后端说
+   * ``edible``、且状态是 ``ready``（窗口内）或 ``makeup``（早宴席补吃）。
+   * 用户明确要求"补吃也纳入一键"，所以 ``makeup`` 要提交。
+   * 一旦两套判据分开写，就会出现"卡片上的按钮是灰的，一键却把它跑了"
+   * 或者反过来的情况 —— 用户没法解释，只会觉得工具有 bug。
+   *
+   * 【为什么不吃 ``unknown``】
+   * ``unknown`` = 还没联网读到时段。卡片上的按钮这时是可点的（"后端仍会把关"），
+   * 但一键是**批量**动作，宁可不做也不要在信息不足时赌一把：
+   * 早宴席在窗口外是会真的吃掉的（补吃），赌错有副作用。
+   */
+  function batchBanquetMeals() {
+    const meals = [];
+    const eaten = new Set((state.banquet && state.banquet.meals) || []);
+    const live = Array.isArray(state.banquetMeals) ? state.banquetMeals : null;
+    for (const meal of ["morning", "evening"]) {
+      if (eaten.has(meal)) continue;
+      const info = live ? live.find((item) => item.meal === meal) : null;
+      if (!info) continue; // 没数据 → 不赌（见上面说明）
+      if (info.edible === false) continue;
+      if (info.state !== "ready" && info.state !== "makeup") continue;
+      meals.push(meal);
+    }
+    return meals;
+  }
+
+  /** 把"待执行的勾选项"整理成提交用的 jobs（批次末尾跟一次宝箱）。 */
+  function batchJobs(picked) {
+    const jobs = [];
+    for (const name of picked) {
+      const entry = state.selection.get(name);
+      if (!entry) continue;
+      if (name === "bbq_energy") {
+        // 宴席一天两顿，每顿一项（早在前、晚在后）
+        for (const meal of batchBanquetMeals()) {
+          jobs.push({ name, params: { ...entry.params, meal } });
+        }
+        continue;
+      }
+      jobs.push({ name, params: { ...entry.params } });
+    }
+    // 批次末尾统一领取一次日常宝箱，避免各任务之间重复多次查询领取
+    if (jobs.length > 0) {
+      jobs.push({ name: BOX_TASK, params: {} });
+    }
+    return jobs;
+  }
+
+  /** 全选 / 全不选：只作用于"参与一键执行且可用"的卡片（见 Q7 的决定）。 */
+  function setAllBatchPicks(on) {
+    for (const name of state.batchTasks) {
+      const view = state.views.get(name);
+      if (!view || view.hidden || !view.enabled || !view.batch_eligible) continue;
+      const entry = state.selection.get(name);
+      if (!entry) continue;
+      entry.checked = Boolean(on);
+      // ★ 2026-10-16：就地改勾选框，不整组重建。
+      // 重建的代价有两个：把**别的**卡片上「停止执行」的按钮重建成「执行」
+      // （闪烁 bug），以及把滚动位置弹回顶部。
+      const card = cardElementFor(name);
+      const box = card && card.querySelector(".task-actions--pick input[type=checkbox]");
+      if (box) box.checked = Boolean(on);
+    }
+    saveSelection();
+    refreshDerivedViews();
+  }
+
+  /**
+   * 那份"两顿能不能吃"的缓存是否已经不可信（需要重发 32007/32008）。
+   *
+   * 【为什么要有失效时刻，而不是"读过就一直用"】
+   * 窗口会翻篇：13:59 之后早宴席就不再是"开放中"、14:00 起换成晚宴席、
+   * 06:00–06:10 两顿都不可吃。拿着早上的结论回答下午的问题，结果就是
+   * "明明过了点却还提示能吃"。失效时刻由**服务端**算好
+   * （``tasks/bbq.py::_expires_at_ms``，用的是它自己的毫秒时间戳 +
+   * 固定的空档边界），前端只做一次比较 —— 不自己推窗口规则。
+   *
+   * 【服务端没给 expires_at 时按"不可信"处理】
+   * 宁可多发一次包，也不要拿一份来历不明的状态去决定"要不要吃掉这一顿"。
+   */
+  function banquetCacheStale() {
+    if (!Array.isArray(state.banquetMeals) || state.banquetMeals.length === 0) {
+      return true;
+    }
+    if (!state.banquetExpiresAt) return true;
+    return Date.now() >= state.banquetExpiresAt;
+  }
+
+  /**
+   * 装填"两顿状态"并算出缓存有效期。
+   *
+   * 【为什么两处都要走它】
+   * 数据有**两个来源**：``GET /api/banquet/status``（专门去问一次）与
+   * 宴席任务跑完后步骤结果里自带的 ``meals``（就地更新，省一次 32007）。
+   * 只更新 ``banquetMeals`` 而忘了 ``banquetExpiresAt``，那条路径拿到的
+   * 数据就会被当成"永久有效" —— 这正是"过了点还说能吃"的来源。
+   */
+  function applyBanquetMeals(meals) {
+    state.banquetMeals = Array.isArray(meals) ? meals : [];
+    const stamps = state.banquetMeals
+      .map((item) => Number(item.expires_at) || 0)
+      .filter((value) => value > 0);
+    // 服务端没给（旧后端）→ 记 0，``banquetCacheStale`` 按"不可信"处理
+    state.banquetExpiresAt = stamps.length > 0 ? Math.min(...stamps) : 0;
+    // ★ 2026-10-18：这里也把面板就地刷一遍 —— 数据来源不止 /api/banquet/status，
+    // 宴席任务跑完的步骤结果里也带一份 meals（见 pollOnce）。以前那条路径只更新
+    // 了 state，面板要等下一次重绘才变，看起来像"吃完了按钮还亮着"。
+    syncBbqPanel(cardElementFor("bbq_energy"));
+  }
+
+  /**
+   * 「一键执行」状态行。
+   *
+   * 回答三个用户真正关心的问题：**会跑哪些、为什么少跑了一个、现在能不能点**。
+   */
+  function renderManualBatchStatus() {
+    const node = $("manual-batch-status");
+    const button = $("btn-run-manual");
+    if (!node || !button) return;
+    node.className = "auto-status";
+
+    const summary = batchSelectionSummary();
+    const jobs = batchJobs(summary.runnable);
+    // 待执行的任务名（宝箱不算"任务"；宴席两顿算一项 —— 用户视角它就是一张卡）
+    const names = [];
+    for (const job of jobs) {
+      if (job.name === BOX_TASK) continue;
+      if (!names.includes(job.name)) names.push(job.name);
+    }
+
+    if (state.running && state.batchRunId) {
+      node.classList.add("auto-status--run");
+      node.textContent = "主动任务：一键执行中…（点右侧「停止执行」可中断剩余任务）";
+      button.textContent = "停止执行";
+      button.classList.add("task-stop");
+      button.disabled = false;
+      return;
+    }
+
+    button.textContent = names.length > 0 ? `一键执行（${names.length}）` : "一键执行";
+    button.classList.remove("task-stop");
+    button.disabled = names.length === 0;
+
+    const session = state.session || {};
+    if (!session.has_session) {
+      node.classList.add("auto-status--warn");
+      node.textContent = "主动任务：需要先登录 —— 登录后可勾选任务批量执行。";
+      return;
+    }
+
+    if (names.length > 0) {
+      const mealCount = jobs.filter((job) => job.name === "bbq_energy").length;
+      const suffix = mealCount > 0 ? `（含宴席 ${mealCount} 顿）` : "";
+      const skipped =
+        summary.done.length > 0
+          ? `；${summary.done.map((name) => titleOf(name)).join("、")}本游戏日已完成，跳过`
+          : "";
+      node.classList.add("auto-status--ok");
+      node.textContent =
+        `主动任务：将执行 ${names.length} 个 —— ${names.map((name) => titleOf(name)).join("、")}` +
+        `${suffix}${skipped}`;
+      return;
+    }
+
+    if (summary.checked.length > 0) {
+      // 勾了却一个都没进来，只有两种原因，逐条说清楚（含糊的"都没跑"会让人
+      // 以为是勾选丢了或者工具坏了）。
+      const reasons = [];
+      if (summary.done.length > 0) {
+        reasons.push(
+          `${summary.done.map((name) => titleOf(name)).join("、")}本游戏日已完成`
+        );
+      }
+      if (summary.checked.includes("bbq_energy")) {
+        // 宴席不是 once_per_day（它的"吃过"记在 banquet_state 里），
+        // 所以它进不来只可能是"此刻不可吃"或"时段还没读到"。
+        reasons.push(
+          state.banquetMeals
+            ? "宴席本宴席日已吃过，或当前时段不可吃"
+            : "宴席时段还没读到"
+        );
+      }
+      node.classList.add("auto-status--warn");
+      node.textContent = `主动任务：${reasons.join("；")}。`;
+      return;
+    }
+
+    node.classList.add("auto-status--warn");
+    node.textContent = "主动任务：未勾选任何任务。";
+  }
+
+  /**
+   * 任务名 → ICON_PATHS 键。没登记的任务不画图标（保持纯文字，与从前一致）。
+   *
+   * ★ 2026-10-18 起值是**语义键**而不是 PNG 路径：同屏的指标卡与任务卡
+   *   共用同一份图形（天梯竞技场 / 天命对决 / 失控炼成阵 / 主线关卡在两边
+   *   都会出现），以后改图形只改 ICON_PATHS 一处。
+   * ★ ``battle_experiment``（辉煌航迹试炼）从前借用 ``grand_line_supply``
+   *   （船舵）的图，两者语义不同 —— 现在有独立的烧瓶 ``flask``。
+   */
   const TASK_ICONS = {
-    mail: "assets/icons/tasks/mail.png",
-    free_gift: "assets/icons/tasks/free_gift.png",
-    alliance_sign_in: "assets/icons/tasks/alliance_sign_in.png",
-    alliance_mining_personal: "assets/icons/tasks/alliance_mining_personal.png",
-    alliance_mining_team: "assets/icons/tasks/alliance_mining_team.png",
-    alliance_donate: "assets/icons/tasks/alliance_donate.png",
-    grand_line_supply: "assets/icons/tasks/grand_line_supply.png",
-    daily_box: "assets/icons/tasks/daily_box.png",
-    sweep_activity: "assets/icons/tasks/sweep_activity.png",
-    sweep_material: "assets/icons/tasks/sweep_material.png",
-    market_buy: "assets/icons/tasks/market_buy.png",
-    top_pvp_battle: "assets/icons/tasks/top_pvp_battle.png",
-    bbq_energy: "assets/icons/tasks/bbq_energy.png",
-    buy_energy: "assets/icons/tasks/buy_energy.png",
-    push_main_stage: "assets/icons/tasks/push_main_stage.png",
-    sign_in: "assets/icons/tasks/sign_in.png",
-    daily_free_draw: "assets/icons/tasks/daily_free_draw.png",
+    // 主动 / 自动任务
+    mail: "mail",
+    free_gift: "gift",
+    friend_gift_claim: "gift_in",
+    alliance_sign_in: "calendar_check",
+    alliance_mining_personal: "pickaxe",
+    alliance_mining_team: "users",
+    alliance_donate: "coin_give",
+    grand_line_supply: "compass",
+    daily_box: "chest",
+    sweep_activity: "map",
+    sweep_material: "flame",
+    market_buy: "bag",
+    top_pvp_battle: "flag",
+    battle_arena: "swords",
+    wudou_pvp_battle: "hexstar",
+    battle_experiment: "flask",
+    battle_yimo: "skull",
+    bbq_energy: "cutlery",
+    buy_energy: "bolt_plus",
+    buy_arena_ticket: "swords",
+    buy_wudou_ticket: "hexstar",
+    buy_top_pvp_ticket: "flag",
+    push_main_stage: "stage",
+    sign_in: "check_circle",
+    daily_free_draw: "card_star",
+    // 只读 / 状态类（2026-10-18 补齐）：同一玩法的"状态查询"与"开打"共用一个
+    // 图形 —— 它们分属自动/主动两个分组，不会并排出现在同一屏，语义一致更好认。
+    login: "switch_account",
+    wallet: "wallet",
+    roles: "roster",
+    handshake: "plug",
+    arena_status: "swords",
+    wudou_status: "hexstar",
+    yimo_status: "skull",
+    top_pvp_status: "flag",
+    main_stage_status: "stage",
+    bbq_status: "cutlery",
+    top_pvp_box: "chest",
+    yimo_box: "chest",
+    daily_task_auto: "checklist",
   };
 
   /**
-   * 钻石使用页的任务视图：**只读展示**，不重复放一套控件。
+   * 钻石使用页的任务视图。
    *
-   * 【为什么不复用主动任务那套卡片】
-   * 同一个任务（例如宴席）出现在两个分区里、各有一份勾选框与参数输入框时，
-   * 两边会各自更新自己的 DOM —— 用户改了一处、另一处还显示旧值，
-   * 看起来就是"这个开关坏了"。所以这里只把"与钻石有关的部分"集中念一遍。
+   * ★ 钻石使用板块现已改为全功能交互卡片（由 renderTaskGroup 渲染至 #tasks-diamond），
+   * 直接在该板块中配置并执行带钻石消耗的任务。不再渲染只读摘要列表。
+   * 保留此函数作为 no-op，确保历史调用点兼容。
    */
   function renderDiamondList() {
-    const container = $("tasks-diamond");
-    container.textContent = "";
-    const members = state.tasks.filter(
-      (task) => !task.hidden && (task.spends_diamond || (task.diamond_purposes || []).length)
-    );
-    if (members.length === 0) {
-      container.appendChild(el("p", { class: "empty muted", text: "💤（当前没有会涉及钻石的任务）" }));
-      return;
-    }
-    for (const task of members) {
-      const entry = state.selection.get(task.name);
-      container.appendChild(
-        el("div", { class: "task" }, [
-          el("div", { class: "task-title" }, [
-            TASK_ICONS[task.name]
-              ? el("img", { class: "task-icon-img", src: TASK_ICONS[task.name], alt: "", "aria-hidden": "true" })
-              : null,
-            el("span", { text: task.title }),
-            // "勾选"这个词在新交互里已经不存在了（2026-09-24）：自动任务靠勾选启用、
-            // 主动任务靠展开确认。所以这里按分组给出各自的真实状态。
-            entry && entry.checked
-              ? el("span", { class: "badge badge--ok", text: "已启用（自动执行）" })
-              : task.group === "manual"
-                ? el("span", { class: "badge badge--warn", text: "需在卡片里确认执行" })
-                : el("span", { class: "badge", text: "未启用" }),
-            task.diamond_purposes && task.diamond_purposes.length
-              ? el("span", { class: "badge badge--danger", text: "有花钱分支" })
-              : null,
-          ]),
-          el("p", { class: "task-sub", text: task.summary }),
-          // ★ 2026-10-05 用户需求：原本这里还会逐个列出"参数名：当前值"
-          // （例如"购买体力次数：0"）。那行只是把参数区已有的信息重念一遍，
-          // 既不参与操作、也不解释风险 —— 用户明确要求删掉。
-          // 保留的三样：任务名、真实状态徽标、一句话说明。
-        ])
-      );
-    }
+    // 钻石任务现由 renderTaskGroup("tasks-diamond", "diamond") 统一接管渲染与交互
   }
 
   function taskBadges(task) {
@@ -924,11 +1516,8 @@
     } else if (!task.requires_auth) {
       badges.push(el("span", { class: "badge badge--ok", text: "免登录" }));
     }
-    // 主动任务（group === "manual"）不展示"可能花钻石"和"有消耗"提醒（用户需求）
-    if (task.group !== "manual") {
-      if (task.spends_diamond || (task.diamond_purposes && task.diamond_purposes.length)) {
-        badges.push(el("span", { class: "badge badge--danger", text: "可能花钻石" }));
-      }
+    // 主动任务与钻石使用板块不展示"有花钱分支/可能花钻石/有消耗"红黄框提示（用户需求）
+    if (task.group !== "manual" && task.group !== "diamond") {
       if (task.consumes) badges.push(el("span", { class: "badge badge--warn", text: "有消耗" }));
     }
     return el("div", { class: "badges" }, badges);
@@ -942,9 +1531,17 @@
    * - 主动任务（group=manual）：左侧是 ▸ 折叠箭头。展开后才显示参数与
    *   「执行这个任务」按钮 —— 会花体力 / 次数的动作必须当场确认一次。
    *
-   * 【为什么主动任务不再有复选框（用户 2026-09-24 要求）】
+   * 【主动任务为什么曾经没有复选框（用户 2026-09-24 要求）】
    * "勾选"的语义是"等着系统去做"，而主动任务需要的是"现在我明确要做"。
    * 用同一个控件表达两种相反的意图，误解的代价是真实的资源被花掉。
+   *
+   * 【★ 2026-10-16：主动任务右侧**又有**勾选框了 —— 但语义不同】
+   * 它的含义是"纳入**一键执行**的候选集"，**不是**"等着系统自动跑"：
+   * 勾上什么都不会发生，只有点顶部的「一键执行」才会发包（用户明确要求）。
+   * 左边那个 ▸ 折叠箭头照旧（展开才看参数、才单独执行），两者互不干扰：
+   * 勾选不展开参数区（``bodyOpen`` 没动），点勾选框也不会触发展开
+   * （头部那个展开 handler 会跳过 ``input``）。
+   * 只给 ``batch_eligible`` 的卡片画 —— 名单来自规格表，前端不抄。
    *
    * 【参数区为什么默认隐藏】
    * 手机上少一半滚动距离（原设计保留）：自动任务未勾选时不显示，
@@ -977,47 +1574,139 @@
     return task.params.filter((param) => !param.hidden);
   }
 
-  function renderTask(task) {
-    const entry = state.selection.get(task.name);
-    const isManual = task.group === "manual";
-    const expanded = isManual && state.expanded.has(task.name);
-    const bodyOpen = isManual ? expanded : entry.checked;
-    const shownParams = visibleParams(task);
+  /**
+   * 这张卡片**真正会画出来**的参数（★ 2026-10-18）。
+   *
+   * 【为什么需要它（这次修的 bug 的根）】
+   * ``visibleParams`` 只回答"规格表里这个参数藏不藏"，不回答"渲染循环会不会跳过它"。
+   * 宴席的 4 个参数（``meal`` / ``invite_*`` / ``invite_friends``）都被
+   * :data:`BBQ_CUSTOM_PARAMS` 接管、在 ``paramsBoxFor`` 的循环里逐个 ``continue``，
+   * 于是参数区是一个**空盒子**；而显隐判据用的是 ``visibleParams().length > 0``
+   * （= 4），空盒子因此**始终可见**，自带 ``border-top + padding-top:10px``，
+   * 与执行槽位那条分隔线一起演出"两块空白 + 两条细线"，还把展开时的高度顶大一截。
+   *
+   * 现在"会不会画出来"只有这一个答案：显隐、循环、``hasCandidates`` 全用它。
+   */
+  function drawnParams(task) {
+    return visibleParams(task).filter(
+      (param) => !(task.name === "bbq_energy" && BBQ_CUSTOM_PARAMS.has(param.name))
+    );
+  }
 
+  /**
+   * 参数区此刻要不要显示。
+   *
+   * 【为什么要单独一个函数】``paramsBoxFor``（首屏造节点）与
+   * ``applyCardBodyOpen``（展开/折叠时就地改 class）必须用**同一套口径** ——
+   * 以前两处各写一遍 ``bodyOpen && visibleParams().length > 0``，
+   * 只要有一处忘了跟着改，就会出现"首屏是收的、点一下变开"的错位。
+   *
+   * ``push_main_stage`` / ``sweep_activity`` 的参数区里还塞了工具条
+   * （进度横幅 / 「更新区域」），它们本身没有参数可言，所以要单独放行。
+   */
+  function paramsBoxShouldShow(task, bodyOpen) {
+    if (!bodyOpen) return false;
+    if (task.name === "push_main_stage" || task.name === "sweep_activity") return true;
+    return drawnParams(task).length > 0;
+  }
+
+  /**
+   * 造一张卡片的参数区。
+   *
+   * 【★ 2026-10-16：为什么它被抽出来】
+   * 它现在有两个调用者：首屏渲染（``renderTask``）与"这一张卡片的参数选项变了"
+   * （``refreshCard``）。以前这段只写在 renderTask 里，所以"下拉选项更新"
+   * 就只能靠整组重建来解决。
+   *
+   * 【为什么参数区可以"始终构建 + hidden"，而执行控件不行】
+   * 参数区里没有任何按 class 计数的验收判据（tools/verify_web_ui.py 只
+   * print 一下它有没有 ``hidden``）；而 ``.task-exec`` 有"未展开时恰好 0 个"
+   * 的硬判据 —— 所以只有执行控件必须真的不在 DOM 里（见 renderTask 的槽位）。
+   */
+  function paramsBoxFor(task, entry, bodyOpen) {
     const paramsBox = el("div", { class: "task-params" });
-    paramsBox.classList.toggle("hidden", !(bodyOpen && shownParams.length > 0));
+    paramsBox.classList.toggle("hidden", !paramsBoxShouldShow(task, bodyOpen));
     if (task.name === "push_main_stage") {
       paramsBox.appendChild(renderMainStageBanner());
     } else if (task.name === "sweep_activity") {
       // 「更新区域」收进展开栏（2026-10-03 用户要求）：标题行只留标题与说明
       paramsBox.appendChild(activityRefreshTools());
-    }
-    for (const param of shownParams) {
-      // 宴席的四个参数交给下面的专用双按钮界面，不在这里重复画一遍
-      if (task.name === "bbq_energy" && BBQ_CUSTOM_PARAMS.has(param.name)) continue;
-      paramsBox.appendChild(renderParam(entry, param));
-    }
-
-    const body = [paramsBox];
-    if (isManual && expanded) {
-      body.push(
-        ...(task.name === "bbq_energy" ? bbqMealControls(task) : manualExecControls(task))
+    } else if (task.name === "battle_arena") {
+      paramsBox.appendChild(
+        el("div", { class: "param" }, [
+          el("div", { class: "param-tools" }, [
+            iconSvg("shield", "stat-icon-svg", 14),
+            el("span", { class: "badge badge--warn", text: "挑战限定" }),
+            el("span", {
+              class: "text-[12px] text-amber-200/90 leading-relaxed",
+              text: "仅自动择弱挑选低战 NPC 训练家（战力 5 万以下）；若候选全为真人高战则安全跳过；对决后自动执行一键领奖；严禁买次数与天命系统。",
+            }),
+          ]),
+        ])
+      );
+    } else if (task.name === "battle_yimo") {
+      paramsBox.appendChild(
+        el("div", { class: "param" }, [
+          el("div", { class: "param-tools" }, [
+            iconSvg("shield", "stat-icon-svg", 14),
+            el("span", { class: "badge badge--ok", text: "挑战限定" }),
+            el("span", {
+              class: "text-[12px] text-emerald-200/90 leading-relaxed",
+              text: "小伤害日常打卡模式：上报保底浮动得分（1200~2800），扣血万分比按「上报伤害 / 部位血量」折算（该得分下为 0），不改变全服世界 Boss 进度与排行榜。",
+            }),
+          ]),
+        ])
       );
     }
+    for (const param of drawnParams(task)) {
+      paramsBox.appendChild(renderParam(entry, param, task.name));
+    }
+    return paramsBox;
+  }
+
+  function renderTask(task) {
+    const entry = state.selection.get(task.name);
+    const isExpandable = task.group === "manual" || task.group === "diamond";
+    const expanded = isExpandable && state.expanded.has(task.name);
+    const bodyOpen = isExpandable ? expanded : entry.checked;
+    const shownParams = drawnParams(task);
+
+    const paramsBox = paramsBoxFor(task, entry, bodyOpen);
+
+    // ★ 2026-10-16：执行控件放进一个**固定槽位**，展开/折叠时只动槽位里的内容
+    // （见 toggleCardExpanded / applyCardBodyOpen），不再整组重建整个列表。
+    //
+    // ⚠️ 折叠时槽位必须**整块不存在**（不是"存在但隐藏"），两个理由：
+    //   ① 折叠态下 DOM 里一个 ``.task-exec`` 都不能有 —— tools/verify_web_ui.py
+    //      是**按 class 全量计数、完全不看可见性**的，有一条判据就是
+    //      "未展开时 .task-exec 恰好 0 个"、另一条是"展开后恰好 1 个"；
+    //   ② 卡片是 ``grid gap-2.5``：多一个空 div 就多一条 10px 的网格间隙，
+    //      每张折叠卡片都会凭空高 10px。
+    // 所以这里与 applyCardBodyOpen 一起维护"有展开体才有槽位"这个不变量。
+    //
+    // ★ 2026-10-18：宴席槽位多一个 ``task-exec-slot--panel`` ——
+    // 它装的是自带分隔线的专用面板（.bbq-meals），槽位不能再补一条分隔线
+    // （否则就是截图里那"两条细线夹一块空白"）。见 input.css 的对应规则。
+    const execSlot = el("div", {
+      class:
+        task.name === "bbq_energy"
+          ? "task-exec-slot task-exec-slot--panel"
+          : "task-exec-slot",
+    });
+    if (isExpandable && expanded) execSlot.append(...execControlsFor(task));
+
+    const body = [paramsBox, execSlot];
 
     const hasCandidates = shownParams.some((param) => param.options_source);
-    const headControl = isManual
+    const headControl = isExpandable
       ? manualToggle(task, expanded)
       : autoControls(task, entry, hasCandidates);
 
-    // 头部布局（2026-10-01）：主动任务 = ▸ 展开箭头在左（点卡片左边展开的
+    // 头部布局（2026-10-01）：主动任务/钻石任务 = ▸ 展开箭头在左（点卡片左边展开的
     // 肌肉记忆不变）；自动任务 = 信息靠左、拨动开关在最右。
-    const taskIcon = TASK_ICONS[task.name];
     const info = el("div", { class: "task-info" }, [
       el("div", { class: "task-title" }, [
-        taskIcon
-          ? el("img", { class: "task-icon-img", src: taskIcon, alt: "", "aria-hidden": "true" })
-          : null,
+        iconSvg(TASK_ICONS[task.name], "task-icon-svg"),
         el("span", { text: task.title }),
         taskBadges(task),
       ]),
@@ -1026,24 +1715,20 @@
 
     const head = el(
       "div",
-      { class: `task-head ${isManual ? "task-head--manual" : "task-head--flip"}` },
-      isManual ? [headControl, info] : [info, headControl]
+      { class: `task-head ${isExpandable ? "task-head--manual" : "task-head--flip"}` },
+      // ★ 2026-10-16：主动任务头部从两段变三段 —— 左边仍是展开箭头
+      // （"点卡片左边展开"的肌肉记忆不变），右边多了「纳入一键执行」的勾选框。
+      // 只给 ``batch_eligible`` 的卡片画：名单来自规格表，
+      // 没登记的任务（购买体力 / 主线通关 / 钻石使用）连勾选框都没有 ——
+      // 一个勾了却不生效的复选框比没有复选框更糟。
+      isExpandable
+        ? [headControl, info, manualPickControl(task, entry)]
+        : [info, headControl]
     );
-    if (isManual && task.enabled) {
+    if (isExpandable && task.enabled) {
       head.addEventListener("click", (event) => {
         if (event.target.closest("button, input, select, a, label")) return;
-        if (state.expanded.has(task.name)) {
-          state.expanded.delete(task.name);
-        } else {
-          state.expanded.add(task.name);
-          // ★ 展开宴席卡片时顺带联网读一次两顿的实时窗口（否则按钮不知道能不能点）。
-          // 不每次都拉：只在"还没读过"时拉一次，之后的刷新由面板上的「刷新」按钮负责，
-          // 免得每展开一次就多发两个包（32007/32008 也算风控可见的流量）。
-          if (task.name === "bbq_energy" && !state.banquetMeals) {
-            refreshBanquetStatus(null);
-          }
-        }
-        renderTaskGroups();
+        toggleCardExpanded(task.name);
       });
     }
 
@@ -1053,12 +1738,92 @@
         class: `task ${bodyOpen ? "task--on" : ""} ${expanded ? "task--expanded" : ""} ${
           task.enabled ? "" : "task--off"
         }`,
+        // ★ 2026-10-16：卡片带上任务名。以前只有内部按钮带 data-task，
+        // 于是"这张卡里的某个控件"只能靠位置去数（`querySelectorAll('.task-exec')[0]`）——
+        // 而 tools/verify_web_ui.py 要点的恰恰是**指定任务**的控件
+        // （一键执行那几条判据必须点确定的两个任务，否则结果随机）。
+        "data-task": task.name,
       },
       [
         head,
         ...body,
       ]
     );
+  }
+
+  /**
+   * 主动任务展开区里的执行控件：宴席卡是专用双按钮面板，其余是默认「执行」按钮。
+   *
+   * 收成一个函数是因为它有**两个调用者**：首屏渲染（``renderTask``）与展开/折叠
+   * （``applyCardBodyOpen``）—— 两边必须造出同一种东西，否则"展开后"和"刷新后"
+   * 会得到两种界面。
+   */
+  function execControlsFor(task) {
+    return task.name === "bbq_energy" ? bbqMealControls(task) : manualExecControls(task);
+  }
+
+  /** 按任务名找卡片节点；名字来自规格表，但仍做一次转义兜底。 */
+  function cardElementFor(taskName) {
+    const escaped = String(taskName).replace(/["\\]/g, "\\$&");
+    return document.querySelector(`.task[data-task="${escaped}"]`);
+  }
+
+  /**
+   * 切换一张主动/钻石任务卡片的展开/折叠 —— **只动这一张卡片的 DOM**。
+   *
+   * 【★ 2026-10-16：为什么不再 renderTaskGroups()】
+   * 以前展开一张卡会重建整个列表，代价有三个：
+   *   ① **所有**卡片的执行按钮被重建 → 「停止执行」态丢失 → 就是用户看到的
+   *      "正在执行/排队中的按钮闪一下变成没执行"（本次的 bug）；
+   *   ② 正在填的参数输入框被替换掉（光标与内容丢失）、滚动位置弹回顶部；
+   *   ③ 宴席面板被重绘（白闪一次）。
+   * 展开/折叠本质上只是"这一张卡片多露一块内容"，所以只改这一张卡片。
+   */
+  function toggleCardExpanded(taskName) {
+    const card = cardElementFor(taskName);
+    const task = state.views.get(taskName);
+    if (!card || !task) return;
+    const opening = !state.expanded.has(taskName);
+    if (opening) state.expanded.add(taskName);
+    else state.expanded.delete(taskName);
+    // ★ 展开宴席卡片时顺带确认一次两顿的实时窗口（否则按钮不知道能不能点）。
+    // ⚠️ 只在这一个时机拉：32007/32008 是**风控可见**的流量，绝不能因为
+    // "现在是局部更新了"就退化成每次重绘都发（判据是"已过期"，见 banquetCacheStale）。
+    if (opening && taskName === "bbq_energy" && banquetCacheStale()) {
+      refreshBanquetStatus(null);
+    }
+    applyCardBodyOpen(card, task, opening);
+    saveExpandedPrefs();
+  }
+
+  /**
+   * 把一张卡片的"展开体"刷成 ``bodyOpen`` 描述的样子（不重建卡片）。
+   *
+   * ``bodyOpen`` 的口径与 ``renderTask`` **完全一致**：
+   * 主动/钻石任务 = 是否展开；自动任务 = 是否勾选（勾了才显示参数）。
+   * 两种任务共用它，是为了让"参数区显隐"这条规则只写一份 —— 以前它只写在
+   * ``renderTask`` 里，所以勾选框/箭头想改显隐就只能整组重建。
+   */
+  function applyCardBodyOpen(card, task, bodyOpen) {
+    const isExpandable = task.group === "manual" || task.group === "diamond";
+    card.classList.toggle("task--on", bodyOpen);
+    card.classList.toggle("task--expanded", isExpandable && bodyOpen);
+    const paramsBox = card.querySelector(".task-params");
+    if (paramsBox) {
+      paramsBox.classList.toggle("hidden", !paramsBoxShouldShow(task, bodyOpen));
+    }
+    const slot = card.querySelector(".task-exec-slot");
+    if (slot) {
+      // ⚠️ 先清空：折叠态下槽位必须真的空，一个 .task-exec 都不能留
+      // （原因见 renderTask 里的注释：验收脚本按 class 全量计数）
+      slot.textContent = "";
+      if (isExpandable && bodyOpen) slot.append(...execControlsFor(task));
+    }
+    const toggle = card.querySelector(".task-toggle");
+    if (toggle) {
+      toggle.title = bodyOpen ? "收起这张卡片" : "展开：看参数并单独执行";
+      toggle.setAttribute("aria-expanded", bodyOpen ? "true" : "false");
+    }
   }
 
   /**
@@ -1078,6 +1843,8 @@
     });
     // ★ 2026-10-04：执行中**不再禁用** —— 点了就排队（见 onExecClick）。
     execBtn.disabled = !task.enabled;
+    // ★ 2026-10-16：建按钮的那一刻就施加状态（同 manualExecControls）
+    applyExecButtonState(execBtn, task.name);
     execBtn.addEventListener("click", (event) => {
       event.preventDefault();
       event.stopPropagation();
@@ -1104,13 +1871,18 @@
       const wanted = checkbox.checked;
       entry.checked = wanted;
       saveSelection();
-      // 整组重渲染：卡片高亮、参数区显隐、钻石页、状态行一次性对齐
-      renderTaskGroups();
+      // ★ 2026-10-16：只改这一张卡片（卡片高亮 + 参数区显隐），其余视图局部刷新。
+      // 以前这里整组重建 —— 顺带把**别的**卡片上「停止执行」的按钮重建成「执行」，
+      // 就是用户看到的"执行中的按钮闪一下变回没执行"。
+      refreshCard(task.name);
+      refreshDerivedViews();
       // 勾选时若还没有候选（例如启动时未登录，或从未拉过），补一次自动拉取：
       // 命中缓存时它是零请求，只有真的没有数据才会联网。
       if (wanted && hasCandidates && activityOptions("activity_areas").length === 0) {
         await ensureActivityCache();
-        renderTaskGroups();
+        // 候选到位后关卡下拉才有内容 —— 这一张卡片的参数区得重造
+        refreshCard(task.name);
+        refreshDerivedViews();
       }
       // ★ 勾选本身就是一次"状态变动" → 让自动执行编排判断一次
       // （今天没跑过就马上跑；跑过则什么也不发，见 ranToday）。
@@ -1123,8 +1895,12 @@
   /**
    * 主动任务的展开箭头（原来这个位置放的是复选框）。
    *
-   * 展开状态记在 ``state.expanded``（只在内存里）：刷新页面后一律折叠 ——
-   * 否则"上次点开的那张卡"看起来像"它还在排队执行"。
+   * 【★ 2026-10-16：展开状态改成服务端持久化】
+   * 以前它只存内存，刷新页面后一律折叠 —— 当初的理由是"免得上次点开的那张卡
+   * 看起来像它还在执行/还在排队"。那条理由现在不成立了：一张卡有没有在执行，
+   * 由按钮自己的「停止执行」红描边态如实表达（而且那个态是从服务端派生的），
+   * 不再需要靠"卡片是不是展开的"去猜。所以展开状态跟 selection 一样
+   * 服务端权威 + 本地兜底（见 saveExpandedPrefs / loadTasks）。
    */
   function manualToggle(task, expanded) {
     const button = el("button", {
@@ -1137,11 +1913,44 @@
     button.disabled = !task.enabled;
     button.addEventListener("click", (event) => {
       event.preventDefault();
-      if (state.expanded.has(task.name)) state.expanded.delete(task.name);
-      else state.expanded.add(task.name);
-      renderTaskGroups(); // 展开状态在 state 里，重建卡片不会丢
+      // ★ 2026-10-16：只动这一张卡片（以前是整组重建，会让别的卡片的
+      // 「停止执行」态丢失 —— 就是这次的闪烁 bug）
+      toggleCardExpanded(task.name);
     });
     return button;
+  }
+
+  /**
+   * 主动任务右侧的「纳入一键执行」勾选框（★ 2026-10-16 用户需求）。
+   *
+   * :return: 勾选框；**不参与一键执行的任务返回 ``null``**（不画任何东西）。
+   *
+   * 【与自动任务那个勾选框的关键差别】
+   * 自动任务的 ``autoCheckbox`` 是"勾上就立刻跑一次"（勾选本身就是执行动作），
+   * 所以它还会 ``runAutomation()``。这里**只记意愿**：真正跑不跑由用户点
+   * 顶部「一键执行」决定 —— 主动任务要花资源，绝不能因为"顺手勾了一下"就发包。
+   *
+   * 【为什么不顺手把参数区展开】
+   * 展开的卡片会跨双列铺满（``.task--expanded``），勾几个就把列表撑爆；
+   * 而且"勾选"与"配置参数"是两件事，混在一起会让用户以为"勾了就等于配好了"。
+   * 参数区仍然只由左边的箭头控制（见 ``bodyOpen``）。
+   */
+  function manualPickControl(task, entry) {
+    if (!task.batch_eligible) return null;
+    const checkbox = el("input", { type: "checkbox", class: "toggle" });
+    checkbox.checked = Boolean(entry && entry.checked);
+    checkbox.disabled = !task.enabled;
+    checkbox.setAttribute("aria-label", `纳入一键执行：${task.title}`);
+    checkbox.title = `纳入一键执行：${task.title}`;
+    checkbox.addEventListener("change", () => {
+      if (!entry) return;
+      entry.checked = checkbox.checked;
+      saveSelection();
+      // ★ 2026-10-16：勾选只影响状态行里的"将执行 N 个"，局部刷新即可。
+      // （它不改参数区显隐 —— 主动任务的展开只由左边的箭头控制，见 bodyOpen 的注释。）
+      refreshDerivedViews();
+    });
+    return el("div", { class: "task-actions task-actions--pick" }, [checkbox]);
   }
 
   /**
@@ -1199,6 +2008,47 @@
     unknown: { panel: "bbq-meal--unknown", button: "bbq-meal-btn--unknown" },
   };
 
+  /**
+   * 宴席面板顶部那行状态文案（★ 2026-10-18）。
+   *
+   * 【它为什么单独成函数】
+   * 这一行现在要同时表达三件事：**宴席日 / 换日时刻**（后端算好的）、
+   * "时段读了没有"、以及"为什么现在读不了"（运行中）。
+   * 而它有三个更新时机（首屏渲染、刷新成功、运行结束后自动补读），
+   * 各写一遍文案必然长得不一样。
+   *
+   * 【为什么时间不在前端拼】
+   * ``reset_text`` 来自 ``services/banquet_state.describe()``，
+   * 也就是 ``daily_reset.BANQUET_RESET_HOUR/MINUTE``（可被环境变量覆盖）——
+   * 前端写死 "06:10" 的话，游戏换点或改了环境变量之后界面就开始说谎，
+   * 而且不会有任何报错。与"日常重置时间由后端给"是同一个原则。
+   */
+  function bbqMealsHeadText() {
+    const banquet = state.banquet || {};
+    const day = banquet.banquet_day || "";
+    const resetText = banquet.reset_text || "";
+    const live = Array.isArray(state.banquetMeals) && state.banquetMeals.length > 0;
+    const dayText = day
+      ? `宴席日 ${day}${resetText ? ` · ${resetText} 换日` : ""}`
+      : "";
+    if (live) return dayText || "宴席时段已读取";
+    // ★ 2026-10-19：`hydrating` = 任务清单已在首帧画完、宴席/候选还在补。
+    // 这时既没在飞也没欠账，说"尚未读取（点刷新）"是在冤枉自己。
+    if (state.banquetLoading || state.hydrating) {
+      return `${dayText ? `${dayText} · ` : ""}正在读取…`;
+    }
+    // 运行中读不了是**预期内**的事（/api/banquet/status 要抢运行闸门），
+    // 文案要说清"不是坏了、也不用你反复点刷新"。
+    if (state.banquetPending) {
+      if (state.banquetPendingReason === "timeout") {
+        return `${dayText ? `${dayText} · ` : ""}读取超时，稍后自动补读`;
+      }
+      return `${dayText ? `${dayText} · ` : ""}任务运行中，结束后自动读取`;
+    }
+    if (!dayText) return "尚未读取宴席时段（点「刷新」）";
+    return `${dayText} · 时段未读取，点「刷新」`;
+  }
+
   function bbqMealControls(task) {
     const entry = state.selection.get(task.name);
     const doneMeals = new Set(
@@ -1208,21 +2058,18 @@
 
     const row = el("div", { class: "bbq-meals" });
     // 顶部一行：状态说明 + 「刷新」按钮（点它联网问一次两顿的实时窗口）
-    const statusText = live
-      ? `宴席日 ${state.banquet ? state.banquet.banquet_day : ""}`
-      : "尚未读取宴席时段（展开卡片或点「刷新」）";
     const refresh = el("button", {
       class: "btn btn--ghost bbq-refresh",
       type: "button",
       text: "刷新",
-      title: "联网读取两顿宴席的开放时间",
+      title: "联网读取两顿宴席的开放时间（任务运行中无法读取，会等它跑完自动读）",
     });
     refresh.addEventListener("click", async () => {
-      await refreshBanquetStatus(refresh);
+      await refreshBanquetStatus(refresh, { silent: false });
     });
     row.appendChild(
       el("div", { class: "bbq-meals-head" }, [
-        el("span", { class: "bbq-meals-day", text: statusText }),
+        el("span", { class: "bbq-meals-day", text: bbqMealsHeadText() }),
         refresh,
       ])
     );
@@ -1236,15 +2083,19 @@
   }
 
   /**
-   * 单顿面板：标题 + 邀请开关 + 执行按钮。
+   * 单顿的**状态判定**（纯数据，不碰 DOM）。
+   *
+   * 【为什么要和 DOM 拆开（★ 2026-10-18）】
+   * 同一套结论有两个消费场景：① 首屏/展开时"造节点"；② 刷新后"就地更新已有节点"。
+   * 以前只有第 ① 条路，所以每次刷新都只能整块重建面板（白闪一次，用户点名要改）。
+   * 拆成 view → apply 之后两条路共用同一份判定：规则只写一次，DOM 也不用重建。
    *
    * 【状态判定顺序】吃过 > 后端状态 > 未联网（``unknown``）。
    * 后端 ``state`` 已经是最终结论，这里只做"吃过"这一层的覆盖 ——
    * 记账在前端只可能更"晚"知道，不能更早。
    */
-  function bbqMealPanel(task, entry, meal, { live, doneMeals }) {
+  function bbqMealView(meal, entry, { live, doneMeals }) {
     const label = meal === "morning" ? "早宴席" : "晚宴席";
-    const inviteKey = meal === "morning" ? "invite_morning" : "invite_evening";
     const info = live ? live.find((item) => item.meal === meal) : null;
     const serverState = info ? info.state : "unknown";
     const windowText = info ? info.window_text : "";
@@ -1261,7 +2112,9 @@
       note = "本宴席日已吃过";
     } else if (serverState === "gap") {
       stateKey = "gap";
-      note = "休整中 · 06:10 刷新";
+      // 换日时刻由后端给（reset_text），不再写死 06:10 —— 见 bbqMealsHeadText。
+      const resetText = (state.banquet && state.banquet.reset_text) || "";
+      note = resetText ? `休整中 · ${resetText} 刷新` : "休整中";
     } else if (serverState === "makeup") {
       stateKey = "makeup";
       note = "已过邀请时间，只吃不邀请";
@@ -1286,10 +2139,97 @@
       (stateKey === "ready" || stateKey === "makeup" || stateKey === "unknown");
     const canInvite = !eaten && clickable && invitable;
 
+    return {
+      meal,
+      label,
+      stateKey,
+      note,
+      clickable,
+      canInvite,
+      // 补吃时在按钮上直接写明白，免得用户以为"这只和窗口内一样"
+      buttonText: stateKey === "makeup" ? `${label} · 补吃` : label,
+      inviteTitle: canInvite
+        ? "这一顿邀请好友一起吃（花钻石）"
+        : eaten
+          ? "本宴席日已吃过"
+          : "窗口外强制不邀请（后端也会拦）",
+    };
+  }
+
+  /**
+   * 把一份 :func:`bbqMealView` 的结果落到**已有**的面板节点上（就地更新）。
+   *
+   * 【为什么要遍历 BBQ_MEAL_STATE_CLASS 去 remove】
+   * 状态类是一个"互斥集合"：面板上同一时刻只该挂一个 ``bbq-meal--*``。
+   * 只加不删的话，``ready`` 转 ``eaten`` 时两条规则同时命中，谁生效取决于
+   * CSS 里的先后顺序 —— 那种"颜色偶尔不对"的问题极难复现。
+   */
+  function applyBbqMealView(panel, view) {
+    if (!panel || !view) return;
+    const cls = BBQ_MEAL_STATE_CLASS[view.stateKey] || BBQ_MEAL_STATE_CLASS.unknown;
+    const keys = Object.keys(BBQ_MEAL_STATE_CLASS);
+    for (const key of keys) panel.classList.remove(BBQ_MEAL_STATE_CLASS[key].panel);
+    panel.classList.add(cls.panel);
+
+    const button = panel.querySelector(".bbq-meal-btn");
+    if (button) {
+      for (const key of keys) button.classList.remove(BBQ_MEAL_STATE_CLASS[key].button);
+      button.classList.add(cls.button);
+      if (button.textContent !== view.buttonText) button.textContent = view.buttonText;
+      button.disabled = !view.clickable;
+    }
+
+    const note = panel.querySelector(".bbq-meal-note");
+    if (note && note.textContent !== view.note) note.textContent = view.note;
+
+    const inviteLabel = panel.querySelector(".bbq-meal-invite");
+    if (inviteLabel) {
+      inviteLabel.classList.toggle("bbq-meal-invite--locked", !view.canInvite);
+      inviteLabel.title = view.inviteTitle;
+      const toggle = inviteLabel.querySelector(".toggle");
+      // ⚠️ 只改 disabled，**不碰 checked**：那是用户的选择，
+      // 窗口短暂关闭不该把他的勾选悄悄抹掉（重新开放时还要用它）。
+      if (toggle) toggle.disabled = !view.canInvite;
+    }
+  }
+
+  /**
+   * 就地把宴席卡片刷成当前 state（★ 2026-10-18：刷新不再整块重建）。
+   *
+   * :return: ``True`` = 找到并更新了面板；``False`` = 卡片/面板还不在 DOM 里
+   *   （未展开、或宴席卡被过滤掉）—— 此时**什么都不用做**：
+   *   下次展开时 ``bbqMealPanel`` 会按同一份 state 造出正确节点。
+   */
+  function syncBbqPanel(card) {
+    if (!card) return false;
+    const head = card.querySelector(".bbq-meals-day");
+    if (!head) return false;
+    // 只在文案真的变了才写：syncBbqPanel 会被**每次轮询**调到（5 秒一次），
+    // 无脑赋同一个字符串也会替换文本节点、白白触发一次排版。
+    const headText = bbqMealsHeadText();
+    if (head.textContent !== headText) head.textContent = headText;
+    const task = state.views.get("bbq_energy");
+    const entry = state.selection.get("bbq_energy");
+    if (!task || !entry) return false;
+    const live = Array.isArray(state.banquetMeals) ? state.banquetMeals : null;
+    const doneMeals = new Set((state.banquet && state.banquet.meals) || []);
+    for (const meal of ["morning", "evening"]) {
+      const panel = card.querySelector(`.bbq-meal[data-meal="${meal}"]`);
+      if (!panel) continue;
+      applyBbqMealView(panel, bbqMealView(meal, entry, { live, doneMeals }));
+    }
+    return true;
+  }
+
+  /** 单顿面板：标题 + 邀请开关 + 执行按钮（状态由 applyBbqMealView 落上去）。 */
+  function bbqMealPanel(task, entry, meal, { live, doneMeals }) {
+    const view = bbqMealView(meal, entry, { live, doneMeals });
+    const inviteKey = meal === "morning" ? "invite_morning" : "invite_evening";
+    const label = view.label;
+
     // 邀请开关（该顿独立）—— 窗口外直接置灰，不给人"点了再说"的机会
     const toggle = el("input", { type: "checkbox", class: "toggle" });
     toggle.checked = entry.params[inviteKey] === true || entry.params[inviteKey] === "true";
-    toggle.disabled = !canInvite;
     toggle.addEventListener("change", () => {
       entry.params[inviteKey] = toggle.checked;
       saveSelection();
@@ -1297,38 +2237,30 @@
 
     const inviteLabel = el(
       "label",
-      {
-        class: `bbq-meal-invite${canInvite ? "" : " bbq-meal-invite--locked"}`,
-        title: canInvite
-          ? "这一顿邀请好友一起吃（花钻石）"
-          : eaten
-            ? "本宴席日已吃过"
-            : "窗口外强制不邀请（后端也会拦）",
-      },
+      { class: "bbq-meal-invite" },
       [toggle, el("span", { text: "邀请好友" })]
     );
 
-    const cls = BBQ_MEAL_STATE_CLASS[stateKey] || BBQ_MEAL_STATE_CLASS.unknown;
     const button = el("button", {
-      class: `btn btn--primary bbq-meal-btn ${cls.button}`,
+      class: "btn btn--primary bbq-meal-btn",
       type: "button",
-      // 补吃时在按钮上直接写明白，免得用户以为"这只和窗口内一样"
-      text: stateKey === "makeup" ? `${label} · 补吃` : label,
       "data-task": task.name,
       "data-meal": meal,
-      disabled: !clickable,
     });
     // 点了就按"这一顿 + 该顿邀请开关"提交一次运行
     button.addEventListener("click", () => onBbqMealClick(task, meal, button));
 
-    return el("div", { class: `bbq-meal ${cls.panel}` }, [
+    const panel = el("div", { class: "bbq-meal", "data-meal": meal }, [
       el("div", { class: "bbq-meal-top" }, [
         el("span", { class: "bbq-meal-name", text: label }),
         inviteLabel,
       ]),
       button,
-      el("em", { class: "bbq-meal-note", text: note }),
+      el("em", { class: "bbq-meal-note", text: view.note }),
     ]);
+    // 状态类、按钮文案、置灰、状态注一次到位（与就地更新走同一条路径）
+    applyBbqMealView(panel, view);
+    return panel;
   }
 
   /**
@@ -1352,7 +2284,7 @@
         { reason: `宴席：${meal === "morning" ? "早宴席" : "晚宴席"}` }
       );
       if (result === "ok") {
-        state.stopTasks.add(task.name);
+        state.optimisticRuns.add(task.name);
         if (button) button.disabled = false;
         syncExecButtons();
       } else {
@@ -1365,29 +2297,182 @@
 
   /**
    * 联网读取宴席两顿的实时窗口状态（GET /api/banquet/status，只读、不发 15003）。
+   *
+   * 【★ 2026-10-16：它的时机变了】
+   * 以前只有"展开宴席卡片且还没读过"才会拉一次，于是用户的实际体验是
+   * "每次都要手动点一下「刷新」"。现在改成**进主界面就自动拉一次**
+   * （首屏加载 / 登录成功 / 切区后跳回本页都走 ``boot → loadTasks``，
+   * 见 ``ensureBanquetStatus``），面板上那个「刷新」按钮降级为
+   * "我想立刻再确认一次"的手动入口。
+   *
+   * 【为什么必须记下 expires_at】
+   * 窗口会翻篇（13:59 早宴席结束、14:00 换晚宴席、06:00–06:10 空档）。
+   * 服务端在每顿状态里给了 ``expires_at``（它算好"下一个会让结论变化的时刻"），
+   * 这里取最小值存下来，超时就作废重拉 —— 否则会拿过期窗口判断"能不能吃"。
+   *
+   * 【★ 2026-10-18：三处用户反馈的落点】
+   * ① **"上一次运行还没有结束"不该是红色报错** ——
+   *    ``/api/banquet/status`` 走的是 ``run_inline``，必须抢全局运行闸门
+   *    （``webapi/state.py``），自动任务在跑时必然 409。那是**预期内**的事，
+   *    不是故障：现在**一条日志都不写**，只记下"欠一次"，等闸门空了静默补读。
+   * ② **连点 / 多个触发点不该各发一次** —— ``state.banquetLoading`` 做并发锁；
+   *    失败后靠 ``banquetRetryAt`` 指数退避（见 retryBanquetAfterRun）。
+   * ③ **刷新不该把面板整块重建**（白闪）—— 成功后只调 ``syncBbqPanel`` 就地更新。
    */
-  async function refreshBanquetStatus(button) {
-    if (button) button.disabled = true;
+  //: 宴席补读的退避参数（★ 2026-10-18 用户要求"自动获取不弹日志"）。
+  //: 失败不写日志、只静默退避；最多 4 次（5→15→45→60 秒），
+  //: 之后交回"下次展开 / 刷新 / 启动"重新触发。
+  const BANQUET_RETRY_BASE_MS = 5000;
+  const BANQUET_RETRY_MAX_MS = 60000;
+  const BANQUET_RETRY_MAX_TIMES = 4;
+  // ★ 2026-10-19：只读查询的客户端超时。只给"会挡住首屏 / 启动链"的三处用
+  // （宴席时段、活动候选、素材目录，见 notes/task_list_first_paint_plan.md）——
+  // 不做全局默认值：运行日志轮询等请求有自己的节奏，不该被统一掐断。
+  // 8 秒的选择：实测 32007/32008 往返 ~2s，活动缓存冷启动 ~3s，
+  // 留一倍余量；真挂住时宁可当作"读失败、稍后补读"，也不能一直转圈。
+  const READ_TIMEOUT_MS = 8000;
+
+  async function refreshBanquetStatus(button, { silent = true } = {}) {
+    // 并发锁：开机自动拉、展开卡片、用户点「刷新」可能同时发生 ——
+    // 以前它们各发一个请求，前两个撞上运行闸门就各写一条红叉。
+    if (state.banquetLoading) return null;
+    state.banquetLoading = true;
+    setBbqRefreshBusy(button, true);
+    const card = cardElementFor("bbq_energy");
+    syncBbqPanel(card); // 立刻把"正在读取…"显示出来
     try {
-      const payload = await call("/api/banquet/status");
-      state.banquetMeals = payload.meals || [];
+      const payload = await call("/api/banquet/status", { timeout: READ_TIMEOUT_MS });
+      applyBanquetMeals(payload.meals);
       if (payload.banquet) state.banquet = payload.banquet;
-      renderTaskGroups();
+      state.banquetPending = false;
+      state.banquetPendingReason = "";
+      state.banquetRetryAt = 0;
+      state.banquetRetryDelay = BANQUET_RETRY_BASE_MS;
+      state.banquetRetryCount = 0;
+      syncBbqPanel(card);
+      refreshDerivedViews();
       return payload;
     } catch (error) {
-      appendRun("✘", `读取宴席时段失败：${describeError(error)}`, "ERROR");
+      if (isRunBusy(error) || isTimeout(error)) {
+        // 运行 / 只读快照占着闸门 = **预期内**；读超时同理 ——
+        // 两者都只记"欠一次"，由 pollOnce 静默退避补读，绝不写日志
+        // （用户 2026-10-18 要求：自动获取不许弹提示）。
+        state.banquetPending = true;
+        state.banquetPendingReason = isTimeout(error) ? "timeout" : "busy";
+        state.banquetRetryAt =
+          Date.now() + (state.banquetRetryDelay || BANQUET_RETRY_BASE_MS);
+        syncBbqPanel(card);
+        return null;
+      }
+      // 真正的失败（网络 / 令牌 / 后端 bug）：自动路径静默，手动「刷新」才如实报
+      state.banquetPending = false;
+      state.banquetPendingReason = "";
+      state.banquetRetryDelay = BANQUET_RETRY_BASE_MS;
+      state.banquetRetryCount = 0;
+      if (!silent) appendRun("✘", `读取宴席时段失败：${describeError(error)}`, "ERROR");
       return null;
     } finally {
-      if (button) button.disabled = false;
+      state.banquetLoading = false;
+      setBbqRefreshBusy(button, false);
+      syncBbqPanel(cardElementFor("bbq_energy"));
     }
   }
 
+  /** 409 = 运行闸门被占（不是错误，只是"现在不行"）。 */
+  function isRunBusy(error) {
+    return Boolean(error && error.status === 409);
+  }
+
+  /** 读超时（`common.js::call` 的 AbortController 标记）：也按"稍后再读"处理。 */
+  function isTimeout(error) {
+    return Boolean(error && error.timeout);
+  }
+
+  /** 「刷新」按钮的忙碌态（标题不变：它是常驻说明，不是临时提示）。 */
+  function setBbqRefreshBusy(button, busy) {
+    const btn = button || (() => {
+      const card = cardElementFor("bbq_energy");
+      return card ? card.querySelector(".bbq-refresh") : null;
+    })();
+    if (!btn) return;
+    btn.disabled = busy;
+    const text = busy ? "读取中…" : "刷新";
+    if (btn.textContent !== text) btn.textContent = text;
+  }
+
   /**
-   * 主动任务（非宴席）的默认操作区：一个「执行」按钮。
+   * 需要时就把宴席时段拉一次（登录 / 切区 / 首屏都会调它）。
+   *
+   * 【为什么单独包一层】
+   * 三个触发点要的是同一件事："现在没有可信数据就去拿一份"。写成三处
+   * ``if (banquetCacheStale()) refreshBanquetStatus(null)`` 的话，
+   * 将来加了新的失效条件（比如服务端多给一个字段）必然漏改一处。
+   */
+  async function ensureBanquetStatus() {
+    const session = state.session || {};
+    if (!session.has_session) return null;
+    if (!banquetCacheStale()) return null;
+    return refreshBanquetStatus(null);
+  }
+
+  /**
+   * 闸门空了就补读一次宴席时段（★ 2026-10-18，2026-10-18 晚重写）。
+   *
+   * 【为什么要专门一个入口】
+   * 运行中拉不到是必然的，但不该让用户"等下次运行完再手动点刷新" ——
+   * 用户对这张卡的期待是"打开就知道现在能不能吃"。所以把那次 409 记成
+   * ``banquetPending``，在轮询看到 **运行已结束** 时补一次。
+   *
+   * 【★ 2026-10-18 晚：为什么重写（用户报"每 5 秒弹一条"）】
+   * 旧实现发请求**之前**就把 ``banquetPending`` 清了。于是 409 分支里的
+   * "是不是第一次"判据永远成立，每轮都写一条 ⏳ —— 用户看到的就是 5 秒一条。
+   * 现在：
+   *   1. ``pending`` **只在成功时**清（见 ``refreshBanquetStatus``）；
+   *   2. 失败按 ``5→15→45→60`` 秒退避，最多 4 次，之后静默放弃；
+   *   3. **一条日志都不写**（用户要求：自动获取不弹提示）；
+   *   4. 只读快照（``snapshotBusyUntil``）在飞时直接跳过，不去撞同一把闸门。
+   */
+  function retryBanquetAfterRun() {
+    if (state.running) return;
+    if (!state.banquetPending) return;
+    if (Date.now() < (state.banquetRetryAt || 0)) return;
+    // 信息面板快照 / 主线状态还占着闸门 → 这轮不试
+    if (Date.now() < (state.snapshotBusyUntil || 0)) return;
+    if (!banquetCacheStale()) {
+      state.banquetPending = false;
+      state.banquetPendingReason = "";
+      return;
+    }
+    if (state.banquetRetryCount >= BANQUET_RETRY_MAX_TIMES) {
+      // 试够了：静默放弃，交给"下次展开 / 刷新 / 启动"重新触发
+      state.banquetPending = false;
+      state.banquetPendingReason = "";
+      return;
+    }
+    state.banquetRetryCount += 1;
+    state.banquetRetryAt = Date.now() + state.banquetRetryDelay;
+    state.banquetRetryDelay = Math.min(
+      state.banquetRetryDelay * 3,
+      BANQUET_RETRY_MAX_MS
+    );
+    ensureBanquetStatus();
+  }
+
+  /**
+   * 主动任务（非宴席）的默认操作区：一个「执行」按钮（+ 可能的"本日已完成"说明）。
    *
    * 宴席改用专用双按钮面板（见 :func:`bbqMealControls`），不走这里。
+   *
+   * 【★ 2026-10-16：本游戏日已做过的任务要置灰】
+   * 用户对工会捐献的要求是"和吃宴席一样，执行一次后就变灰"。判据直接用
+   * 服务端下发的账本 ``state.autoDone``（= ``/api/tasks`` 的 ``auto_done``，
+   * 由 ``webapi/state.py`` 在任务**成功**后写入），前端不自己记 ——
+   * 本地记的账换个端口/换个壳就丢了（与 autoDone 判重同一个教训）。
+   * 置灰只挡「执行」按钮，**不动勾选框**：勾选表达的是"下次一键带上我"，
+   * 与"今天已经做过了"是两件事。
    */
   function manualExecControls(task) {
+    const doneToday = Boolean(task.once_per_day && state.autoDone.has(task.name));
     const button = el("button", {
       class: "btn btn--primary task-exec",
       type: "button",
@@ -1395,9 +2480,21 @@
       "data-task": task.name,
     });
     // ★ 2026-10-04：执行中**不再禁用** —— 点了就排队（见 onExecClick）。
-    button.disabled = !task.enabled;
+    // ★ 2026-10-16：它已经在跑/在排队时也**不禁用** —— 那时按钮是「停止执行」，
+    // 一个置灰的"停止"等于不让人反悔。
+    button.disabled = !task.enabled || (doneToday && !isTaskStoppable(task.name));
+    if (doneToday) button.title = "本游戏日已完成，明天 05:00 后恢复";
+    // ★ 2026-10-16：建按钮的那一刻就施加状态（这是"展开不闪"的关键一步）
+    applyExecButtonState(button, task.name);
     button.addEventListener("click", () => onExecClick(task, button));
-    return [button];
+    if (!doneToday) return [button];
+    return [
+      button,
+      el("p", {
+        class: "task-note",
+        text: "本游戏日已完成（明天 05:00 后恢复）—— 一键执行也会自动跳过它。",
+      }),
+    ];
   }
 
   // ------------------------------------------------------------------
@@ -1408,6 +2505,46 @@
    */
   function execLabel() {
     return isDevMode() ? `执行（${runModeText()}）` : "执行";
+  }
+
+  /**
+   * 这个任务此刻是不是"在跑 / 还在排队"（= 按钮该显示「停止执行」）。
+   *
+   * 【★ 2026-10-16：为什么必须收敛成一个判定】
+   * 判定以前散在两处，而**渲染按钮的那两个函数一次都不读** —— 于是任何
+   * "整组重建"（展开一张卡片、勾选、改参数……）都会把按钮重建成常态「执行」，
+   * 要等下一次轮询（运行中 1.2s / 空闲 5s）才变回来。用户看到的就是
+   * "正在执行的按钮闪一下变成没执行"。现在判定只有这一份，而且**渲染时也要
+   * 施加**（见 applyExecButtonState），所以"重建丢状态"这类 bug 从结构上没有了。
+   */
+  function isTaskStoppable(name) {
+    return state.activeTasks.has(name) || state.optimisticRuns.has(name);
+  }
+
+  /**
+   * 把一个执行按钮刷成它此刻该有的样子（文案 + 配色 + 提示）。
+   *
+   * 【它有两个调用者，缺一不可】
+   *   ① 建按钮时（manualExecControls / autoControls）—— 保证**新造的**按钮
+   *      生下来就是对的。这是"重建不丢状态"的关键，也是 2026-10-16 那次
+   *      「展开卡片导致按钮闪烁」的真正修复点。
+   *   ② syncExecButtons() 遍历时 —— 保证**已经存在的**按钮随轮询原地变，
+   *      不必重建 DOM（重建会打断正在填的参数、把滚动弹回顶部）。
+   * 两条路径共用同一份规则，才不会出现"渲染出来是一种、轮询后是另一种"。
+   *
+   * 原始 title 记在 ``data-exec-title`` 上：``.task-auto-exec`` 生来就带一句
+   * "主动执行「XXX」"，切到停止态再切回来时必须还原成它，而不是留一句
+   * "中断正在执行的任务"（旧代码的 ``: button.title`` 是个自赋值空操作）。
+   */
+  function applyExecButtonState(button, name) {
+    if (!button) return;
+    if (!button.dataset.execTitle) {
+      button.dataset.execTitle = button.title || "";
+    }
+    const stopping = isTaskStoppable(name);
+    button.classList.toggle("task-stop", stopping);
+    button.textContent = stopping ? "停止执行" : execLabel();
+    button.title = stopping ? "中断正在执行的任务" : button.dataset.execTitle;
   }
 
   /**
@@ -1423,11 +2560,12 @@
    * 才有的点。全部变成停止，就等于"想排队却只能停"。
    */
   function onExecClick(task, button) {
-    if (state.stopTasks.has(task.name)) {
+    if (isTaskStoppable(task.name)) {
       stopCurrentRun(task);
       return;
     }
-    if (task.group === "manual") runManualTask(task, button);
+    if (task.group === "diamond") runDiamondTask(task, button);
+    else if (task.group === "manual") runManualTask(task, button);
     else runSingleAutoTask(task, button);
   }
 
@@ -1437,34 +2575,54 @@
    * 【为什么只改属性而不 renderTaskGroups()】
    * 轮询 1.2 秒一次；整组重建会打断正在填的参数、把滚动位置弹回顶部。
    * 按钮只有文字与一个类名会变，原地改最省事也更稳。
+   *
+   * 【★ 2026-10-16：判定与施加都交给 applyExecButtonState】
+   * 这里不再自己写 ``state.stopTasks.has(...)`` —— 那份判定现在和
+   * "建按钮时"共用同一个函数，才不会出现两条路径不同步。
    */
   function syncExecButtons() {
     for (const button of document.querySelectorAll(".task-exec, .task-auto-exec")) {
       const name = button.getAttribute("data-task");
       if (!name) continue;
-      const stopping = state.stopTasks.has(name);
-      button.classList.toggle("task-stop", stopping);
-      button.textContent = stopping ? "停止执行" : execLabel();
-      button.title = stopping ? "中断正在执行的任务" : button.title;
+      applyExecButtonState(button, name);
     }
   }
 
   /**
-   * 中断**当前正在跑的那一批**（队列里剩下的照常跑）。
+   * 中断**这一张卡片对应的那一批**（队列里剩下的照常跑）。
+   *
+   * 【★ 2026-10-16：改成按 run_id 精确停】
+   * 以前这里发的是**空 body**，服务端的 ``stop()`` 会退化成"停当前正在跑的那一批"
+   * （见 ``webapi/state.py``）。于是出现"按钮说停 A、实际被停的是正在跑的 B"——
+   * 你点的那张卡很可能还在排队，被误停的却是别人的任务。
+   * run_id 从轮询派生的 ``activeRunIds`` 里取（见 pollOnce），取不到才退回老语义
+   * （空 body）—— 老服务端 / 旧数据下依旧能用。
    *
    * 【为什么成功后要往运行结果里写一行】
    * 服务端的日志要经过轮询才会到界面上，中间有 1 秒左右的空窗。
    * 用户点了停止却"什么都没发生"，第一反应一定是"按钮坏了" ——
    * 所以这里立刻补一行本地结果，点下去就有反馈。
+   * 排队中的批次服务端会回 ``cancelled_queued``，措辞与一键执行的
+   * ``stopManualBatch`` 保持一致，用户不必学两套说法。
    */
   async function stopCurrentRun(task) {
+    const runId = state.activeRunIds.get(task.name) || null;
     try {
-      const payload = await call("/api/stop", { method: "POST" });
+      const payload = await call("/api/stop", {
+        method: "POST",
+        body: runId ? { run_id: runId } : {},
+      });
       if (payload && payload.stopped) {
-        appendRun("⏹", `已请求中断：${task.title}`, "warn");
+        const queued = payload.cancelled_queued ? "（它还在排队，已直接撤销）" : "";
+        appendRun("⏹", `已请求中断：${task.title}${queued}`, "warn");
       } else {
         appendRun("⚠", "当前没有可中断的运行。", "warn");
-        state.stopTasks.delete(task.name);
+        // ★ 2026-10-16：回滚本地乐观值。服务端说"没得停"，说明我们以为在跑的
+        // 那件事其实已经结束了 —— 三个记账都得摘掉，否则按钮会一直显示
+        // 「停止执行」却点不动。
+        state.optimisticRuns.delete(task.name);
+        state.activeTasks.delete(task.name);
+        state.activeRunIds.delete(task.name);
         syncExecButtons();
       }
     } catch (error) {
@@ -1603,7 +2761,11 @@
   async function ensureMaterialTree() {
     if (state.materialTree) return state.materialTree;
     try {
-      const payload = await call("/api/material/tree", { params: { category: "all" } });
+      const payload = await call("/api/material/tree", {
+        params: { category: "all" },
+        // 本机读配置通常几十毫秒；给超时只为"磁盘/进程异常时别把首屏链挂死"。
+        timeout: READ_TIMEOUT_MS,
+      });
       state.materialTree = payload;
       state.materialError = "";
       return payload;
@@ -1655,7 +2817,9 @@
     const params = {};
     if (area) params.area = String(area);
     if (refresh) params.refresh = 1;
-    return call("/api/activity/preview", { params });
+    // 8 秒超时：这个接口在缓存过期时会真的联网（11025），必须给它一个上界，
+    // 否则 boot 的补水链 / 启动自动任务会被一次卡死的请求无限期拖住。
+    return call("/api/activity/preview", { params, timeout: READ_TIMEOUT_MS });
   }
 
   /**
@@ -1836,16 +3000,44 @@
   function numberStepper(entry, param) {
     const isFloat = param.kind === "float";
     const step = isFloat ? 0.5 : 1;
+    // ★ 2026-10-18：下限由**规格表**下发（`param.minimum`）——
+    // 「钻石使用」的四个购买次数是 1（取消 0 次 / 不再提供只读），
+    // 其余数字参数（含荣耀之巅 battles）没有这个字段，缺省 0 语义一字不变。
+    // 这里刻意不按任务名猜：参数面的唯一来源是后端的规格表。
+    const rawMin = Number(param.minimum);
+    const lowerBound = Number.isFinite(rawMin) ? rawMin : 0;
     const current = entry.params[param.name];
+
+    // 存着的旧值低于下限（最典型：以前「购买次数」选了 0 = 只读）→ 打开页面
+    // 就归位到下限并写回。否则界面显示 1、提交的却还是 0，后端会直接拒绝，
+    // 表现成"看着填好了，点执行却报错"。
+    let initial = current;
+    if (current === null || current === undefined || current === "") {
+      // 下限 > 0 时不留空：空着提交会落到 default，界面与请求就对不上了。
+      initial = lowerBound > 0 ? lowerBound : "";
+    } else {
+      const numeric = Number(current);
+      if (Number.isFinite(numeric) && numeric < lowerBound) initial = lowerBound;
+    }
+    if (initial !== current) {
+      entry.params[param.name] = initial;
+      saveSelection();
+    }
 
     const input = el("input", {
       type: "number",
-      min: "0",
+      min: String(lowerBound),
       step: String(step),
       inputmode: isFloat ? "decimal" : "numeric",
       class: "stepper-input",
     });
-    input.value = current === null || current === undefined ? "" : String(current);
+    input.value = initial === "" ? "" : String(initial);
+
+    /** 减号在下限处禁用：点得动却没反应，比明显按不了更让人困惑。 */
+    function syncMinusState() {
+      const text = String(input.value).trim();
+      minus.disabled = text !== "" && Number(text) <= lowerBound;
+    }
 
     /** 把"算好的数值"写回参数并持久化（数字用数字存，后端会照 kind 再转一次）。 */
     function commit(value) {
@@ -1853,9 +3045,10 @@
       entry.params[param.name] = value;
       saveSelection();
       renderDiamondList();
+      syncMinusState();
     }
 
-    /** 按步长加减：空值 / 非法值按 default → 0 处理，绝不产生负数。 */
+    /** 按步长加减：空值 / 非法值按 default → 下限处理，绝不越过下限。 */
     function nudge(direction) {
       const typed = Number(input.value);
       const fallback = Number(param.default);
@@ -1863,9 +3056,9 @@
         ? typed
         : Number.isFinite(fallback)
           ? fallback
-          : 0;
+          : lowerBound;
       const raw = base + direction * step;
-      const clamped = Math.max(0, raw);
+      const clamped = Math.max(lowerBound, raw);
       commit(isFloat ? Math.round(clamped * 100) / 100 : Math.round(clamped));
     }
 
@@ -1873,17 +3066,24 @@
       // 输入过程中不纠正（否则删到一半就被改成 0，没法输入新数字）
       entry.params[param.name] = input.value;
       saveSelection();
+      syncMinusState();
     });
     input.addEventListener("blur", () => {
       const raw = String(input.value).trim();
       if (raw === "") {
-        // 空 = "没填"（例如荣耀之巅的 battles 空着就是只读），保持空
+        // 空 = "没填"（例如荣耀之巅的 battles 空着就是用配置默认值），保持空；
+        // 但下限 > 0 的参数不允许空着 —— 直接落回下限（购买次数 = 1）。
+        if (lowerBound > 0) {
+          commit(lowerBound);
+          return;
+        }
         entry.params[param.name] = "";
         saveSelection();
+        syncMinusState();
         return;
       }
       let value = Number(raw);
-      if (!Number.isFinite(value) || value < 0) value = 0;
+      if (!Number.isFinite(value) || value < lowerBound) value = lowerBound;
       // 浮点按步长对齐（1.3 → 1.5），整数四舍五入（3.7 → 4）
       value = isFloat
         ? Math.round(value / step) * step
@@ -1905,6 +3105,7 @@
     });
     minus.addEventListener("click", () => nudge(-1));
     plus.addEventListener("click", () => nudge(1));
+    syncMinusState();
 
     return el("div", { class: "stepper" }, [minus, input, plus]);
   }
@@ -1936,7 +3137,7 @@
     return String(choice);
   }
 
-  function renderChoiceParam(entry, param) {
+  function renderChoiceParam(entry, param, taskName) {
     const current = entry.params[param.name];
     // 存着的旧值不在档位里（例如以前手填的 7）→ 归到第一档（0 = 只读）。
     // 方向与后端 `normalize_sweep_times` 一致：宁可少扫，绝不多扫。
@@ -1968,7 +3169,9 @@
               saveSelection();
             }
           }
-          renderTaskGroups();
+          // ★ 2026-10-16：只重建这一张卡片的参数区（换大类会连带清掉不匹配的
+          // 区域/关卡）。以前是整组重建 —— 顺带把所有卡片的「停止执行」抹掉。
+          refreshCard(taskName);
         }
         renderDiamondList();
       },
@@ -1988,7 +3191,7 @@
    * 展开栏顶部的「更新区域」（2026-10-03 从标题行移入）。参数区里不再放
    * 其他刷新按钮，避免"两个按钮各刷一半"的混乱（那个只刷区域、不刷关卡）。
    */
-  function renderCandidateParam(entry, param) {
+  function renderCandidateParam(entry, param, taskName) {
     const source = param.options_source;
     const current = entry.params[param.name];
     const known = candidateOptions(entry, source);
@@ -1999,7 +3202,12 @@
 
     if (known.length === 0) {
       let emptyText = "（尚无候选）";
-      if (source === "activity_areas") {
+      // ★ 2026-10-19：首帧先出清单、候选随后补（见 loadTasks）。这段窗口里
+      // 说"请先登录 / 点更新区域"会让人以为读失败了 —— 如实写"正在读取"，
+      // 补水完成后 refreshHydratedCards() 会重画这张卡。
+      if (state.hydrating) {
+        emptyText = "（正在读取…）";
+      } else if (source === "activity_areas") {
         emptyText = "（尚无候选：请先登录并点「更新区域」）";
       } else if (source === "activity_sections") {
         emptyText = "（请先选择活动区域）";
@@ -2070,20 +3278,20 @@
             state.activityOptions.activity_sections = state.activityAllSections[value].sweepable || [];
             state.activityBlocked = state.activityAllSections[value].blocked || [];
             clearStaleSectionSelections();
-            renderTaskGroups();
+            refreshCard(taskName);
           } else {
             state.activityOptions.activity_sections = [];
             state.activityBlocked = [];
             clearStaleSectionSelections();
-            renderTaskGroups();
+            refreshCard(taskName);
             // 异步兜底拉关卡
-            void loadSectionsForArea(value).then(() => renderTaskGroups());
+            void loadSectionsForArea(value).then(() => refreshCard(taskName));
           }
         } else if (source === "material_areas") {
           // 换素材区域 → 清空上一区的指定关卡，并重新渲染刷新关卡下拉列表
           entry.params.section = "";
           saveSelection();
-          renderTaskGroups();
+          refreshCard(taskName);
         }
         renderDiamondList();
       },
@@ -2106,17 +3314,17 @@
     );
   }
 
-  function renderParam(entry, param) {
+  function renderParam(entry, param, taskName) {
     const current = entry.params[param.name];
     let input;
 
     // ★ 这两个分支必须排在 ``kind`` 判断**之前**：``choices`` / ``options_source``
     // 描述的是"怎么渲染"，而 ``kind`` 只说值是什么类型（times 是 int，界面只给三档）。
     if (Array.isArray(param.choices) && param.choices.length > 0) {
-      return renderChoiceParam(entry, param);
+      return renderChoiceParam(entry, param, taskName);
     }
     if (param.options_source) {
-      return renderCandidateParam(entry, param);
+      return renderCandidateParam(entry, param, taskName);
     }
 
     // ★ 2026-10-02：数字项一律渲染成**加减号步进器**（左 [-] / 中间手输 / 右 [+]），
@@ -2181,8 +3389,16 @@
    * 提交场景从一个变成了两种：
    * - 自动执行：只提交 auto 组的勾选项（见 runAutomation）；
    * - 主动任务：只提交被点开确认的那一个（见 runManualTask，它自己拼任务数组）。
-   * 而且"勾选"这个标记现在**只对自动任务有意义**（主动任务没有复选框了），
    * 按分组过滤比在每个调用点写 if 更不容易出错。
+   *
+   * 【★ 2026-10-16：修正一句过时的说明】
+   * 这里原先写着"勾选这个标记现在**只对自动任务有意义**（主动任务没有复选框了）"。
+   * 那句从 2026-10-16 起不成立了：主动任务卡片右侧也有了勾选框
+   * （见 ``manualPickControl``），语义是"纳入一键执行"。
+   * 不过**一键执行不走这个函数** —— 它要的是一份**有序**清单
+   * （服务端 ``batch_tasks`` 给的顺序）+ 每个任务后跟一个宝箱 + 宴席两顿拆项
+   * + 跳过今天已做过的，见 ``batchSelectionSummary`` / ``batchJobs``。
+   * 把那些规则塞进这个通用函数，只会让"自动执行"这条路径也背上它们。
    */
   function collectTasks({ group = null } = {}) {
     const tasks = [];
@@ -2476,12 +3692,20 @@
     // ★ 2026-10-04：执行中**不再禁用**按钮（禁用 = 排不了队）。
     // 改为让按钮在「执行 / 停止执行」两个状态之间切换（见 syncExecButtons）。
     if (wasRunning && !running) {
-      // 队列跑空：所有"停止执行"复原成"执行"
-      state.stopTasks.clear();
+      // 队列跑空：所有"停止执行"复原成"执行"。
+      // ★ 2026-10-16：``activeTasks`` 本来就已经由轮询按服务端事实重算过
+      // （跑空时 steps 里只剩已完成批，派生出空集）；这里再显式清一遍是
+      // **防御性**的 —— 万一将来有人把 setRunning 调在这个顺序之外。
+      state.activeTasks.clear();
+      state.activeRunIds.clear();
+      state.optimisticRuns.clear();
       renderTaskGroups();
     } else {
       syncExecButtons();
       renderAutoStatus();
+      // ★ 2026-10-16：一键执行的按钮要在「一键执行 ↔ 停止执行」之间跟着切，
+      // 而这条路径不会整组重建卡片（那会打断用户正在填的参数）。
+      renderManualBatchStatus();
     }
   }
 
@@ -2568,6 +3792,10 @@
       $("progress-card").classList.remove("hidden");
       setRunning(true);
       renderProgress({ status: "running", steps: [] });
+      // ★ 2026-10-16：把批次号留给调用方。一键执行要用它做"精确停止"
+      // （那批可能还在排队，而 /api/stop 默认停的是"正在跑的那一批"）。
+      // 注意别写成 state.lastRunId —— 那个是结果流水的去重游标。
+      state.submittedRunId = result.run_id || null;
       console.info("run started", result.run_id, reason);
       // ★ 2026-10-04：排在别人后面时给一句明确反馈 ——
       // "点了没反应"是最容易让人以为按钮坏了的一种沉默。
@@ -2598,6 +3826,39 @@
       uiAlert(`${reason ? `【${reason}】` : ""}${message}`);
       renderAutoStatus();
       return "error";
+    }
+  }
+
+  /**
+   * 执行一个钻石使用任务（用户在「钻石使用」板块点开卡片后按「执行」）。
+   *
+   * 1. 前置安全闸门：检查钻石总闸（#opt-allow-diamond），未开启时友好阻断并提示；
+   * 2. 仅提交该任务本身，不附加活跃宝箱；
+   * 3. 提交至队列执行，支持通过「停止执行」中断。
+   */
+  async function runDiamondTask(task, button) {
+    const allowDiamond = Boolean($("opt-allow-diamond") && $("opt-allow-diamond").checked);
+    if (!allowDiamond) {
+      appendRun("⚠", `执行「${task.title}」被阻止：钻石总闸未开启，请先在上方勾选「允许花钻石（总闸）」`, "warn");
+      if (window.Ct && typeof window.Ct.uiAlert === "function") {
+        window.Ct.uiAlert(`执行「${task.title}」需要消耗钻石，请先在上方开启「允许花钻石（总闸）」。`);
+      }
+      return;
+    }
+    const entry = state.selection.get(task.name);
+    if (!entry) return;
+
+    const jobs = [{ name: task.name, params: { ...entry.params } }];
+
+    try {
+      const result = await submitRun(jobs, { reason: `钻石任务：${task.title}` });
+      if (result === "ok") {
+        state.optimisticRuns.add(task.name);
+        if (button) button.disabled = false;
+        syncExecButtons();
+      }
+    } finally {
+      if (button) button.disabled = !task.enabled;
     }
   }
 
@@ -2634,13 +3895,103 @@
       const result = await submitRun(jobs, { reason: `主动任务：${task.title}` });
       if (result === "ok") {
         // 这一批还没跑完 → 本卡片的按钮变成「停止执行」
-        state.stopTasks.add(task.name);
+        state.optimisticRuns.add(task.name);
         if (button) button.disabled = false;
         syncExecButtons();
       }
     } finally {
       // 失败时按钮保持可用（不再由"运行中"禁用），跑完由 setRunning 复原
       if (button) button.disabled = !task.enabled;
+    }
+  }
+
+  /**
+   * 「一键执行」：把勾上的主动任务按顺序**一次**提交（★ 2026-10-16 用户需求）。
+   *
+   * 【为什么必须是一次 /api/run，而不是"逐个点执行按钮"】
+   * 两者跑出来的任务清单、顺序、每个任务后的宝箱完全一样；差别只在
+   * **能不能整批停**：服务端的 ``/api/stop`` 只中断"当前这一批"，
+   * 队列里其他批次照跑。分成 N 批的话，用户点「停止执行」只能停掉手上
+   * 那一个任务，后面 5 批照跑 —— 而他要的是"从当前任务开始，后面全都别跑"。
+   *
+   * 【为什么不弹二次确认（2026-10-02 起主动任务就没有了）】
+   * 勾选本身就是一次显式动作，再叠一层"确定吗"只会让人养成闭眼点确定的习惯。
+   * 消耗的告知由卡片上的「⚠ 消耗资源」徽标、参数的 danger 标注、
+   * 以及钻石总闸（真正的硬闸）共同承担。
+   *
+   * 【宴席的特殊处理】
+   * 它一天两顿、每顿一项（早在前），且**不串宝箱**（与专用按钮语义一致）；
+   * 只有"没吃过且此刻能吃"的顿才会进列表（见 ``batchBanquetMeals``）。
+   */
+  async function runManualBatch() {
+    const session = state.session || {};
+    if (!session.has_session) {
+      uiAlert("请先登录，再使用一键执行。");
+      return;
+    }
+
+    // 宴席的"能不能吃"要靠 32007/32008 的窗口数据。缓存过期/还没读过就先补一次，
+    // 补不到也不阻断整批 —— 只是把宴席摘掉（其余任务照跑），并在状态行说明。
+    const bbqPicked = batchSelectionSummary().runnable.includes("bbq_energy");
+    if (bbqPicked && banquetCacheStale()) {
+      await refreshBanquetStatus(null);
+    }
+
+    const summary = batchSelectionSummary();
+    const jobs = batchJobs(summary.runnable);
+    if (jobs.length === 0) {
+      uiAlert("没有可执行的任务：请先勾选，或确认勾选的任务本日还没做过。");
+      renderManualBatchStatus();
+      return;
+    }
+
+    const names = [];
+    for (const job of jobs) {
+      if (job.name === BOX_TASK) continue;
+      if (!names.includes(job.name)) names.push(job.name);
+    }
+
+    const result = await submitRun(jobs, {
+      reason: `主动任务一键执行（${names.length} 个）`,
+    });
+    if (result === "ok") {
+      // 记住批次号：让「停止执行」精确撤掉**这一批**（它可能还在排队，
+      // 而服务端默认停的是"正在跑的那一批" —— 那就停错对象了）。
+      state.batchRunId = state.submittedRunId;
+      // 这批还没跑完 → 相关卡片的按钮也变成「停止执行」，点哪个都停这一批
+      for (const name of names) state.optimisticRuns.add(name);
+      syncExecButtons();
+    }
+    renderManualBatchStatus();
+  }
+
+  /**
+   * 「停止执行」（一键执行那一排的按钮）。
+   *
+   * 语义 = **从当前正在执行的任务开始，之后的所有任务都不执行**
+   * （用户 2026-10-16 原话）。服务端 :meth:`stop` 本来就满足这一点
+   * （当前步骤在任务边界停下、其余 pending 标成 skipped），
+   * 我们额外做的是**认人**：带上 ``run_id``，只撤自己提交的那一批。
+   */
+  async function stopManualBatch() {
+    const runId = state.batchRunId;
+    try {
+      const payload = await call("/api/stop", {
+        method: "POST",
+        body: runId ? { run_id: runId } : {},
+      });
+      if (payload && payload.stopped) {
+        const queued = payload.cancelled_queued ? "（它还在排队，已直接撤销）" : "";
+        appendRun("⏹", `已请求中断一键执行${queued}`, "warn");
+      } else {
+        appendRun("⚠", (payload && payload.message) || "当前没有可中断的运行。", "warn");
+      }
+    } catch (error) {
+      appendRun("✘", `中断失败：${describeError(error)}`, "ERROR");
+    } finally {
+      state.batchRunId = null;
+      renderManualBatchStatus();
+      syncExecButtons();
     }
   }
 
@@ -2667,7 +4018,7 @@
         }
         state.autoError = "";
         // 这一批还没跑完 → 本卡片的按钮变成「停止执行」
-        state.stopTasks.add(task.name);
+        state.optimisticRuns.add(task.name);
         if (button) button.disabled = false;
         syncExecButtons();
         renderAutoStatus();
@@ -2821,6 +4172,18 @@
   function appendLogLine(line, { countUnread = true } = {}) {
     state.logLines.push(line);
     if (state.logLines.length > LOG_DOM_LIMIT) state.logLines.shift();
+    // ★ 2026-10-18：逐场 / 逐关的进度（``PROGRESS`` 级别，见 services/progress.py）
+    // 直接进「运行结果」流水 —— 这正是用户要的"打完一场就输出一场，最后再总结"。
+    // 任务结束那行 ✔/✘ 步骤结果照旧是收尾的总结，两者不在同一个来源、不会重复。
+    if (line.level === "PROGRESS") {
+      appendRun(
+        "⚔",
+        String(line.message).split("\n")[0],
+        "PROGRESS",
+        { countUnread, at: line.ts || "" }
+      );
+      return;
+    }
     if (line.level === "WARNING" || line.level === "ERROR") {
       appendRun(
         line.level === "ERROR" ? "✘" : "⚠",
@@ -3311,7 +4674,51 @@
       // 服务端记账的"今天跑过哪些"：运行期间/刚跑完都跟着刷新
       if (Array.isArray(status.auto_done)) state.autoDone = new Set(status.auto_done);
       // ★ 宴席"哪顿吃过了"也随轮询刷新（与 auto_done 同理）：吃完那一刻按钮就该灰。
-      if (status.banquet) state.banquet = status.banquet;
+      if (status.banquet) {
+        state.banquet = status.banquet;
+        // ★ 2026-10-18：宴席日刚翻篇时（06:10 之后），面板头部那行
+        // "宴席日 … · 06:10 换日"与两顿的置灰状态都要跟着变 ——
+        // 就地刷，不重建（重建会白闪，且会打断正在点的按钮）。
+        syncBbqPanel(cardElementFor("bbq_energy"));
+      }
+      // ★ 2026-10-16：一键执行那一批的步骤**全部收尾**后，按钮要从「停止执行」
+      // 变回「一键执行」。判据用"我们这批还有没有 pending/running 的步骤"，
+      // 而不是"队列里还有没有东西" —— 队列里可能排着别人点的批次。
+      // （必须在 setRunning 之前清：它内部会按这个标志决定按钮长什么样。）
+      if (state.batchRunId) {
+        const ours = (status.steps || []).filter(
+          (step) => step.run_id === state.batchRunId
+        );
+        const unfinished = ours.some(
+          (step) => step.status === "pending" || step.status === "running"
+        );
+        if (!unfinished) state.batchRunId = null;
+      }
+      // ★ 2026-10-16：把"哪些任务正在执行 / 还在排队"从服务端响应里**派生**出来。
+      //
+      // 服务端把"正在跑的那一批 + 排队批次的 pending 步骤"拼进 ``steps``
+      // （webapi/state.py 的 status()），每项带 name / status / run_id。
+      // 判据只用 pending / running ——
+      // ⚠️ steps 里还混着 ``_recent`` 里**已完成**的最近 10 批，那条判据依赖
+      // "已完成步骤的 status 只会是 ok/fail/skipped，永远不可能是 pending/running"
+      // （tests/test_webapi_state_queue.py 里有一条测试钉住这一点）。
+      const activeTasks = new Set();
+      const activeRunIds = new Map();
+      for (const step of status.steps || []) {
+        if (step.status !== "pending" && step.status !== "running") continue;
+        const name = step.name;
+        if (!name) continue;
+        activeTasks.add(name);
+        // 同名步骤可能跨批次出现（每个主动任务后面都跟一个 daily_box）。
+        // 取**第一条**：steps 的顺序就是它们会被执行的顺序，第一条 = 最先被处理的
+        // 那一批，也正是「停止」该撤掉的对象。
+        if (!activeRunIds.has(name)) activeRunIds.set(name, step.run_id || null);
+      }
+      state.activeTasks = activeTasks;
+      state.activeRunIds = activeRunIds;
+      // 乐观值的使命到此结束：这一份响应就是权威事实。留着它只会让"其实已经
+      // 跑完"的按钮一直停在「停止执行」（也顺手覆盖了"提交后服务端没接住"的兜底）。
+      state.optimisticRuns.clear();
       setRunning(status.status === "running");
       if (state.running || status.run_id) $("progress-card").classList.remove("hidden");
       if (status.run_id) {
@@ -3336,7 +4743,9 @@
         // ``meals`` 字段），就地刷新按钮四态 —— 不用再发一次 32007 去问。
         const bbqStep = (status.steps || []).find((s) => s.name === "bbq_energy");
         if (bbqStep && bbqStep.data && Array.isArray(bbqStep.data.meals)) {
-          state.banquetMeals = bbqStep.data.meals;
+          // 走 applyBanquetMeals：那份 meals 也带 expires_at，
+          // 顺手把缓存有效期一起更新（漏了它 = 这份数据被当成永久有效）。
+          applyBanquetMeals(bbqStep.data.meals);
         }
         // 若步骤中包含 yimo_box，根据是否 3 份宝箱已全部领满决定是否完成或排下一次轮询
         const yimoStep = (status.steps || []).find((s) => s.name === "yimo_box");
@@ -3362,12 +4771,35 @@
         // 刚跑完：刷新状态行与资源数字。用户跑完任务最关心的就是
         // "体力/钻石变了多少"，自动刷一次比让他自己去找「刷新」更自然。
         // ★ 荣耀之巅例外：只有这次运行**真的操作过它**才顺带读一次。
+        // ★ 2026-10-18：只读状态任务 top_pvp_status 也算"碰过它" ——
+        // 它现在是 /api/player?full=1 用来刷新名次/积分的那一个。
         const touchedTopPvp = (status.steps || []).some(
-          (step) => step.name === "top_pvp_battle"
+          (step) => step.name === "top_pvp_battle" || step.name === "top_pvp_status"
         );
         renderAutoStatus();
-        loadPlayer({ full: touchedTopPvp });
-        refreshMainStageStatus();
+        // ★ 2026-10-18：启动时"让行"欠下的那次统一读取在这里补上 ——
+        // 用 full=1 一次拿全（含荣耀之巅），与原来 boot 那次等价。
+        // 见 boot 里的 bootFullPlayerPending 说明。
+        const needFull = state.bootFullPlayerPending;
+        state.bootFullPlayerPending = false;
+        // ★ 2026-10-18 晚：这三个 run_inline 抢**同一把**全局闸门，必须串起来。
+        // 旧写法不 await，紧接着的 refreshMainStageStatus() 与
+        // retryBanquetAfterRun() 会并发撞 409 —— "宴席提示每 5 秒一条"的直接来源
+        // （快照本身要串行跑 5~6 个只读任务，20 秒级）。
+        state.snapshotBusyUntil = Date.now() + 60000;
+        void loadPlayer({ full: touchedTopPvp || needFull, quiet: true })
+          .then((ok) => {
+            // 队列里还有下一批时会被让行挡下（409）→ 把欠账还回去，
+            // 等那批跑完再补，别把"启动那次统一读取"静默丢掉。
+            if (needFull && !ok) state.bootFullPlayerPending = true;
+          })
+          .finally(() => refreshMainStageStatus())
+          .finally(() => {
+            state.snapshotBusyUntil = 0;
+            // 闸门空了：允许立刻补读一次（不必再等退避）
+            state.banquetRetryAt = 0;
+            retryBanquetAfterRun();
+          });
       }
       // ★ 运行期间被挡下的自动执行在这里补一次（见 runAutomation 的 pendingAuto）。
       // 【2026-10-04 修】旧条件（wasRunning 迁移）覆盖不了"提交 409 时本页还没见过
@@ -3377,6 +4809,9 @@
         state.pendingAuto = false;
         await runAutomation("补跑");
       }
+      // ★ 2026-10-18：运行中没能读到的宴席时段，在这里补读一次。
+      // 自动获取全程静默（不写日志）；快照在飞时会被 snapshotBusyUntil 挡住。
+      retryBanquetAfterRun();
     } catch (error) {
       if (error.status === 401) {
         // 轮询时发现令牌失效：停止本页轮询，回登录页重新建立身份。
@@ -3418,6 +4853,9 @@
     state.nextReset = payload.next_daily_reset || "";
     // ★ 服务端记账的"今天已自动跑过"（2026-10-04）：权威判重来源，见 ranToday。
     state.autoDone = new Set(payload.auto_done || []);
+    // ★ 一键执行的成员顺序（2026-10-16）：服务端已排好序，前端照用 ——
+    // 顺序规则（宴席第一、其余按规格表声明顺序）只在服务端实现一次。
+    state.batchTasks = Array.isArray(payload.batch_tasks) ? payload.batch_tasks : [];
     // ★ 宴席"哪顿吃过了"（2026-10-05）：服务端记账，与 auto_done 无关。
     if (payload.banquet) state.banquet = payload.banquet;
     // ★ 任务勾选/参数（2026-10-05）：**以服务端保存值为权威**。
@@ -3470,15 +4908,48 @@
       allowDiamondCheckbox.checked = saved;
       state.allowDiamondSynced = true;
     }
+    // ★ 展开状态（2026-10-16）：与上面两段同款"服务端权威 + 本地兜底"。
+    // updated_at 为空 = 服务端从未存过（升级后首启）→ 读 localStorage。
+    // ⚠️ 必须排在 reconcileSelection / renderTaskGroups 之前：卡片的展开体
+    // 是照着 state.expanded 造的，晚了就会先按"全折叠"渲染一版。
+    const savedUiPrefs = payload.ui_prefs || {};
+    if (savedUiPrefs.updated_at) {
+      const names = Array.isArray(savedUiPrefs.expanded) ? savedUiPrefs.expanded : [];
+      state.expanded = new Set(names.filter((name) => typeof name === "string"));
+      try {
+        localStorage.setItem(STORAGE_KEYS.uiPrefs, JSON.stringify([...state.expanded]));
+      } catch {
+        /* 存储被禁用时忽略 */
+      }
+    } else {
+      state.expanded = readStoredExpanded();
+    }
     reconcileSelection();
-    // ★ 活动区域 / 关卡候选：**过期才联网**（每周三 20:00 之后，或首次使用）。
-    // 命中缓存时这里是零请求 —— 用户明确要求"不要每次都自动拉取，一周才变一次"。
-    // 未登录时它会立刻返回，卡片上的状态行会如实写"需要先登录"。
-    await ensureActivityCache();
-    // ★ 素材关卡与元素试炼静态子目录树：固定配置，零网络发包
-    await ensureMaterialTree();
-    // renderTaskGroups 内部会顺带刷新自动任务状态行（原来这里是 syncRunModeLabel）
+    // ★ 2026-10-19：**首帧只等 /api/tasks**（见 notes/task_list_first_paint_plan.md）。
+    //
+    // 【旧写法的问题】下面三个 ensure 都排在 renderTaskGroups() 之前，
+    // 其中 ``ensureBanquetStatus()`` 是一次真实的 32007→32008 往返
+    // （实测 ~2s，且宴席状态只在内存、每次开页面必发），活动候选在缓存过期时
+    // 还要再串两次 run_inline（~3s）。结果就是"打开程序 → 两栏只剩一行读取中"。
+    //
+    // 【现在的口径】清单结构不依赖这三个请求（全在 /api/tasks 里），
+    // 先画出来；候选 / 宴席随后补，补完只重画真正受影响的卡片。
+    // ⚠️ 三个 ensure 仍然**保持顺序 await** —— 它们都走运行闸门（run_inline），
+    // 并行发只会互相 409；而且 boot() 紧接着要提交自动任务，读必须先于写完成。
+    state.hydrating = true;
     renderTaskGroups();
+    try {
+      for (const hydrate of [ensureActivityCache, ensureMaterialTree, ensureBanquetStatus]) {
+        try {
+          await hydrate();
+        } catch {
+          // 三个 ensure 各自都有失败兜底；这里只保证一个抛错不会带倒后面的补水。
+        }
+      }
+    } finally {
+      state.hydrating = false;
+      refreshHydratedCards();
+    }
   }
 
   // ------------------------------------------------------------------
@@ -3499,6 +4970,26 @@
     window.addEventListener("resize", syncTabsScrollHint);
     window.addEventListener("load", syncTabsScrollHint);
     $("btn-refresh-info").addEventListener("click", () => loadPlayer());
+
+    // --- 主动任务：一键执行工具行（★ 2026-10-16） ---
+    // 同一个按钮两种身份：空闲时提交一批，运行中变「停止执行」。
+    // 用 state.batchRunId 判身份而不是只看 state.running —— 否则"别的批次
+    // 在跑、我没提交过任何东西"时点它会走进停止逻辑，白弹一句"没有可中断的运行"。
+    const batchBtn = $("btn-run-manual");
+    if (batchBtn) {
+      batchBtn.addEventListener("click", () => {
+        if (state.batchRunId && state.running) stopManualBatch();
+        else runManualBatch();
+      });
+    }
+    const selectAllBtn = $("btn-select-all");
+    if (selectAllBtn) {
+      selectAllBtn.addEventListener("click", () => setAllBatchPicks(true));
+    }
+    const selectNoneBtn = $("btn-select-none");
+    if (selectNoneBtn) {
+      selectNoneBtn.addEventListener("click", () => setAllBatchPicks(false));
+    }
     const dryRunEl = $("opt-dry-run");
     if (dryRunEl) {
       dryRunEl.addEventListener("change", () => {

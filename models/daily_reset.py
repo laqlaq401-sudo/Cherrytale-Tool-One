@@ -187,3 +187,33 @@ def in_banquet_gap(now: datetime | None = None) -> bool:
         hour=BANQUET_RESET_HOUR, minute=BANQUET_RESET_MINUTE, second=0, microsecond=0
     )
     return start <= moment < end
+
+
+def next_banquet_gap_boundary(now: datetime | None = None) -> datetime:
+    """``now`` 之后**最近的一次空档边界**（06:00 或 06:10，取更早的那个）。
+
+    :param now: 计算基准；``None`` 表示"现在"。
+    :return: 带时区（``DISPLAY_TZ``）的时刻，**一定晚于 ``now``**。
+
+    【谁需要它（★ 2026-10-16）】
+    网页端要把 ``/api/banquet/status`` 拉到的"两顿能不能吃"缓存住，并且**跨过
+    会让结论变化的时刻就作废重拉**。空档期的两个端点（06:00 开始、06:10 结束）
+    正是这样的时刻 —— 它们与 :func:`banquet_day` 的换日点同源，用同一个
+    （本机）时钟口径算，才不会与 :func:`in_banquet_gap` 的判定自相矛盾。
+
+    【为什么"一定晚于 now"很重要】
+    调用方拿它当"缓存最早可以失效的时刻"。若它可能等于/早于 now，
+    缓存就会在每次判断时都立刻过期 —— 表现是"每点一次就发两个包"，
+    正好是这次要修掉的那个毛病。所以这里只取**严格大于** now 的候选。
+    """
+    moment = _moment(now)
+    candidates: list[datetime] = []
+    for offset in (0, 1):
+        base = (moment + timedelta(days=offset)).replace(
+            second=0, microsecond=0
+        )
+        candidates.append(base.replace(hour=BANQUET_RESET_HOUR, minute=0))
+        candidates.append(
+            base.replace(hour=BANQUET_RESET_HOUR, minute=BANQUET_RESET_MINUTE)
+        )
+    return min(candidate for candidate in candidates if candidate > moment)

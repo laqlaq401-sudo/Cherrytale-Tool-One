@@ -36,6 +36,7 @@ from models.main_stage import (
     FightingRequestPacket,
     FightingResultPacket,
     GetLastSectionPacket,
+    PVPVerifyPacket,
     ReceiveStarRewardPacket,
     SetUseTeamIDPacket,
     make_battle_server_verify,
@@ -69,7 +70,18 @@ def make_test_session() -> GameSession:
     """构造离线会话，注入最小可用登录态。"""
     session = GameSession("https://example.invalid", timeout=1.0)
     session.token_store.update(uid="test_user", token="test_token")
-    session.set_game_state(GameSessionState(token="test_token", player_id=10000003, server_id=113))
+    mock_roles = (
+        {"roleSid": 153867701, "roleID": 130008001, "roleLV": 80, "roleStar": 5, "name": "晨曦"},
+        {"roleSid": 153867702, "roleID": 130008002, "roleLV": 80, "roleStar": 5, "name": "烈焰"},
+        {"roleSid": 153867703, "roleID": 130008003, "roleLV": 75, "roleStar": 4, "name": "微风"},
+        {"roleSid": 153867704, "roleID": 130008004, "roleLV": 70, "roleStar": 4, "name": "厚土"},
+        {"roleSid": 153867705, "roleID": 130008005, "roleLV": 70, "roleStar": 3, "name": "激流"},
+    )
+    session.set_game_state(
+        GameSessionState(
+            token="test_token", player_id=10000003, server_id=113, roles=mock_roles
+        )
+    )
     return session
 
 
@@ -225,6 +237,53 @@ class TestSecurityGuards:
         assert 11015 not in pids
         assert 11017 not in pids
 
+    def test_sensitive_stage_direct_fight_once_fuse(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """原则 2 守卫：即便直接调用 _fight_once，遇到 cheatCheck=1 必须立即熔断且绝不发包。"""
+        session = make_test_session()
+        sec_map, _, _ = load_main_stage_index()
+        cheat_sec = sec_map[102000001]
+        assert cheat_sec.is_cheat_check_required is True
+
+        recorded: list[bytes] = []
+        monkeypatch.setattr(GameClient, "post_raw", lambda self, b: recorded.append(b))
+
+        task = MainStageTask(session)
+        with task.open_game_client() as game:
+            ok, res, msg = task._fight_once(game, cheat_sec)
+
+        assert ok is False
+        assert res is None
+        assert "cheatCheck=1" in msg
+        assert len(recorded) == 0
+
+    def test_fighting_power_calculated_from_actual_account_roles(self) -> None:
+        """原则 1 守卫：出战战力必须严格基于当前账号实际拥有的英雄属性计算，严禁使用 suggest_cp。"""
+        from tasks.main_stage import resolve_account_team_power
+
+        # 模拟当前登录账号的 5 名高练角色（100级5星）
+        roles_high = [
+            {"roleSid": 1001, "roleID": 130000101, "roleLV": 100, "roleStar": 5},
+            {"roleSid": 1002, "roleID": 130000201, "roleLV": 100, "roleStar": 5},
+            {"roleSid": 1003, "roleID": 130000301, "roleLV": 100, "roleStar": 5},
+            {"roleSid": 1004, "roleID": 130000401, "roleLV": 100, "roleStar": 5},
+            {"roleSid": 1005, "roleID": 130000501, "roleLV": 100, "roleStar": 5},
+        ]
+        cp_high = resolve_account_team_power(roles_high)
+        # 5 个 100 级 5 星角色真实战力通常在 300 万以上
+        assert cp_high >= 3000000
+
+        # 模拟新手账号的 5 名初级角色（20级1星）
+        roles_low = [
+            {"roleSid": 2001, "roleID": 130000101, "roleLV": 20, "roleStar": 1},
+            {"roleSid": 2002, "roleID": 130000201, "roleLV": 20, "roleStar": 1},
+            {"roleSid": 2003, "roleID": 130000301, "roleLV": 20, "roleStar": 1},
+            {"roleSid": 2004, "roleID": 130000401, "roleLV": 20, "roleStar": 1},
+            {"roleSid": 2005, "roleID": 130000501, "roleLV": 20, "roleStar": 1},
+        ]
+        cp_low = resolve_account_team_power(roles_low)
+        assert cp_low <= 600000
+        assert cp_high > cp_low * 5
+
     def test_insufficient_stamina_halts_cleanly(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """体力不足时：平稳停机，绝不发送 11015 开战请求，更绝不买体力。"""
         session = make_test_session()
@@ -288,6 +347,9 @@ class TestProgressionAndRewards:
                 assert packet.fightData.token == 88888
                 assert packet.fightData.sectionId == 102000004
                 assert packet.battleResult.teamId == TEAM_TYPE_PVE1
+                assert packet.battleResult.fightingPower > 0
+                assert packet.battleResult.damage > 0
+                assert packet.ComboRecord.totalComboCount > 0
                 assert len(packet.token) == 32
                 assert packet.token == make_fight_verify_token(88888, packet.timeCostSec, 1)
                 # 返回成功结算与剩余体力 94
@@ -295,6 +357,14 @@ class TestProgressionAndRewards:
                 cost_obj = encode_message(1, cost_item)
                 sub = encode_int(1, 0) + encode_message(3, cost_obj)
                 return envelope_bytes(11018, sub)
+            if pid == 97025:  # 97025 异步遥测
+                env = parse_envelope(body)
+                verify_packet = PVPVerifyPacket.decode(env.sub_packet_bytes)
+                assert verify_packet.battleToken == 88888
+                assert verify_packet.sectionID == 102000004
+                assert verify_packet.winOrLose == 1
+                assert verify_packet.battleType == 10
+                return envelope_bytes(0, b"")
             raise AssertionError(f"未预期的请求：pid={pid}")
 
         recorded = patch_transport(monkeypatch, handler)
@@ -308,7 +378,7 @@ class TestProgressionAndRewards:
         assert task.energy_left == 94
 
         pids = [parse_envelope(b).packet_id for b in recorded]
-        assert pids == [2007, 11011, 5013, 11015, 11017]
+        assert pids == [2007, 11011, 5013, 11015, 11017, 97025]
 
     def test_area_completion_triggers_star_chest_claiming(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """小章节最后一关通关后，自动触发 11007 领取章节满星宝箱。"""
@@ -332,7 +402,14 @@ class TestProgressionAndRewards:
             if pid == 11015:
                 return envelope_bytes(11016, encode_int(1, 0) + encode_int(2, 66666))
             if pid == 11017:
+                env = parse_envelope(body)
+                settle = FightingResultPacket.decode(env.sub_packet_bytes)
+                assert len(settle.battleResult.myTeamRecord) == 5
+                assert len(settle.battleResult.enemyTeamRecord) == 5
+                assert settle.battleResult.damageContent.startswith("t=")
                 return envelope_bytes(11018, encode_int(1, 0))
+            if pid == 97025:
+                return envelope_bytes(0, b"")
             if pid == 11007:  # 领小章满星宝箱
                 env = parse_envelope(body)
                 chest_packet = ReceiveStarRewardPacket.decode(env.sub_packet_bytes)

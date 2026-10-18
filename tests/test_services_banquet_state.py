@@ -18,6 +18,7 @@ from pathlib import Path
 import pytest
 
 from models.activity_stage import DISPLAY_TZ
+from models import daily_reset
 from services import banquet_state
 
 
@@ -122,9 +123,46 @@ def test_corrupt_file_degrades_to_empty(state_file: Path) -> None:
 
 
 def test_describe_view(state_file: Path) -> None:
+    """``describe()`` 供 /api/tasks 与 /api/banquet/status 共用。
+
+    ★ 2026-10-18：除 ``banquet_day`` / ``meals`` 外还下发
+    ``reset_text``（换日时刻，来自 ``daily_reset.BANQUET_RESET_*``）
+    与 ``in_gap``（此刻是否在 06:00–06:10 空档）—— 卡片头部那行
+    "宴席日 … · 06:10 换日"必须由后端给，前端不许写死时间。
+    """
     banquet_state.mark_meal_done("evening", _session(), now=_oct(20, 0, day=3), path=state_file)
     view = banquet_state.describe(_session(), now=_oct(20, 0, day=3), path=state_file)
-    assert view == {"banquet_day": "2026-10-03", "meals": ["evening"]}
+    assert view == {
+        "banquet_day": "2026-10-03",
+        "reset_text": "06:10",
+        "in_gap": False,
+        "meals": ["evening"],
+    }
+
+
+def test_describe_reset_text_follows_configured_time(
+    state_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """换日时刻改了（环境变量 / 游戏改点），``reset_text`` 必须跟着变。
+
+    这正是"时间要同步到卡片"那条需求的本质：前端只显示后端在用的那个时刻，
+    改口径只需改 ``models/daily_reset.py`` 一处。
+    """
+    monkeypatch.setattr(daily_reset, "BANQUET_RESET_HOUR", 7)
+    monkeypatch.setattr(daily_reset, "BANQUET_RESET_MINUTE", 5)
+
+    view = banquet_state.describe(now=_oct(12, 0, day=3), path=state_file)
+
+    assert view["reset_text"] == "07:05"
+    # 12:00 已过 07:05 → 不再是空档期
+    assert view["in_gap"] is False
+
+
+def test_describe_in_gap_flag(state_file: Path) -> None:
+    """06:00–06:10 期间 ``in_gap`` 必须为 True（卡片据此显示"休整中"）。"""
+    view = banquet_state.describe(now=_oct(6, 5, day=3), path=state_file)
+
+    assert view["in_gap"] is True
 
 
 def test_clear(state_file: Path) -> None:

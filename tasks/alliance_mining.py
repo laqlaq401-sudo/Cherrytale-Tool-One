@@ -75,11 +75,13 @@
 from __future__ import annotations
 
 import logging
+import random
 import time
 from collections.abc import Mapping
 from typing import ClassVar, Final
 
 from client.game_client import GameClient
+from services import cancellation
 from models.alliance import (
     FORBIDDEN_PACKET_IDS,
     MINING_ALLOWED_PACKET_IDS,
@@ -144,12 +146,6 @@ CONSECUTIVE_FAILURE_STOP: Final[int] = 2
 #: ⚠️ 真被这道上限夹住时会**打 WARNING 留痕**，绝不静默少占 —— 若哪天游戏把
 #: 上限提到 5，日志会立刻告诉你，而不是安静地漏做一次。
 MAX_TEAM_PITS_PER_DAY: Final[int] = 4
-
-#: 汇总里最多列几条明细（其余折叠成"另 N 个见开发者日志"）。
-#:
-#: 【为什么要折叠】2026-10-05 真机那次的运行视图有 33 条 unfillable + 15 条失败，
-#: 共约 60 行，人根本读不了。聚合后一眼能看出"卡在哪一类"，细节仍留在 DEBUG。
-_MAX_LISTED_DETAILS: Final[int] = 3
 
 #: "占不了坑"的原因分类（键 → 中文短标签）。
 #:
@@ -573,10 +569,15 @@ class AllianceMiningPersonalTask(_AllianceMiningBase):
             # ② 收矿（闭环前置：不收的矿会占着坑）
             harvested: list[str] = []
             harvest_failed: list[str] = []
+            harvest_count = 0
             for pit in state.personalList:
                 if not pit.needs_harvest(now):
                     continue
+                cancellation.raise_if_cancelled()
+                if harvest_count > 0:
+                    cancellation.sleep_interruptible(random.uniform(0.3, 0.5))
                 ok, text, _res = self._harvest_one(game, pit.sid)
+                harvest_count += 1
                 if ok:
                     harvested.append(text)
                     # 裸 pit.sid 是**开发者日志**内容（运行视图只报"收了几个矿"）
@@ -834,29 +835,23 @@ class AllianceMiningTeamTask(_AllianceMiningBase):
 
     @staticmethod
     def _aggregate(items: list[tuple[str, str]]) -> str:
-        """把 ``[(分类键, 明细), …]`` 折成"分类计数 + 少量样例"的一行。
+        """把 ``[(分类键, 明细), …]`` 折成"分类计数"一行。
 
-        :return: 形如 ``名册里没有这个角色 ×18、等级不足 ×14``；
-            后面最多再跟 :data:`_MAX_LISTED_DETAILS` 条明细，其余折叠。
+        :return: 形如 ``名册里没有这个角色 ×18、等级不足 ×14``。
 
-        【为什么要折叠】见 :data:`_MAX_LISTED_DETAILS` —— 真机那次 33 条明细
-        把运行视图刷成了 60 行，等于没有信息。聚合后保留"卡在哪一类"与
-        "几个具体例子"，全量明细进 DEBUG。
+        【为什么不再带样例（★ 2026-10-18 用户要求"再修彻底点"）】
+        运行视图要回答的是"卡在哪一类、几个"，不是"矿点 X 槽位 Y 需要某角色"——
+        后者既不能现场练角色、也不能换坑，只会把一行结果撑成三行。
+        明细（含矿点 / 槽位 / 需求等级）**全部进 ``logger.info``**，
+        运行视图一个都不留；结构化明细照旧放在 ``TaskResult.data["unfillable"]``。
         """
         counts: dict[str, int] = {}
         for key, _detail in items:
             counts[key] = counts.get(key, 0) + 1
-        parts = [
+        return "、".join(
             f"{UNFILLABLE_REASON_LABELS.get(key, key)} ×{count}"
             for key, count in sorted(counts.items(), key=lambda kv: -kv[1])
-        ]
-        text = "、".join(parts)
-        shown = items[:_MAX_LISTED_DETAILS]
-        if shown:
-            text += "；例：" + "；".join(detail for _key, detail in shown)
-        if len(items) > len(shown):
-            text += f"（另 {len(items) - len(shown)} 个见开发者日志）"
-        return text
+        )
 
     # ------------------------------------------------------------------
     # 占坑配额（★ 2026-10-05 晚：客户端的三条限制，这里判前两条）
@@ -1145,7 +1140,19 @@ class AllianceMiningTeamTask(_AllianceMiningBase):
         if gate_note:
             message += f"；{gate_note}"
         if unfillable:
-            message += f"；无法占坑 {len(unfillable)} 个（{self._aggregate(unfillable)}）"
+            # ★ 2026-10-18：明细**全部进开发者日志**，运行视图只留分类计数。
+            # 旧文案是"无法占坑 N 个（矿点 X 槽位 Y 需要某角色…）"：
+            # ① 单位其实是"候选槽位"，与"占坑 N 次"并列会被读成超了每日次数；
+            # ② 三条"矿点/槽位/等级"对用户毫无可操作性，只是把一行撑成三行。
+            self.logger.info(
+                "团体矿：%d 个候选槽位无人可填 —— %s",
+                len(unfillable),
+                "；".join(detail for _key, detail in unfillable),
+            )
+            message += (
+                f"；跳过 {len(unfillable)} 个候选槽位"
+                f"（{self._aggregate(unfillable)}）"
+            )
         if join_failed:
             # ⚠️ 这里**只报次数**，不带错误码 —— 用户读不懂 `-8`，
             #    而它对我们排查有用，所以留在 DEBUG 与 data 里。

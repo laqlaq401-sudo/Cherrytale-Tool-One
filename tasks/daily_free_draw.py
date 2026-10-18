@@ -201,11 +201,20 @@ class DailyFreeDrawTask(BaseTask):
                     self.logger.error("卡池 %d 抽卡异常：%s", pool_id, exc)
 
             ok = len(drawn_pools) > 0 or len(failed_pools) == 0
-            msg = (
-                f"已完成 {len(drawn_pools)} 个卡池的免费抽卡（卡池：{drawn_pools}，零钻石消耗）"
-                if drawn_pools
-                else f"免费抽卡失败（尝试卡池：{failed_pools}）"
-            )
+            # ★ 2026-10-18：不再把裸卡池 ID 塞进运行视图（用户看不懂
+            # `卡池：[252000710, 252000810]`）；ID 仍在 data.drawn_pools 里。
+            if drawn_pools:
+                msg = f"已完成 {len(drawn_pools)} 个卡池的免费抽卡（零钻石消耗）"
+                if failed_pools:
+                    msg += (
+                        f"；另有 {len(failed_pools)} 个卡池被服务端拒绝"
+                        "（详见开发者日志）"
+                    )
+            else:
+                msg = (
+                    f"免费抽卡失败：{len(failed_pools)} 个卡池均被服务端拒绝"
+                    "（详见开发者日志）"
+                )
             return TaskResult(
                 task=self.name,
                 ok=ok,

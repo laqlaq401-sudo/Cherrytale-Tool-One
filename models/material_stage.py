@@ -35,21 +35,14 @@ _LOGGER: Final[logging.Logger] = logging.getLogger("models.material_stage")
 #: 业务成功码
 MATERIAL_STAGE_SUCCESS: Final[int] = SUCCESS_ERROR_CODE
 
-#: 客户端首通签名静态盐值（与降临关/普通主线关卡保持同构）
-FIGHT_SIGN_SALT: Final[str] = "03120908"
-
-#: 允许出站的消息白名单（区域清单、扫荡、首通握手、首通结算）
+#: 允许出站的消息白名单（区域清单、扫荡）
 #:
-#: ★ 2026-10-03 修订：移除 ``11003 GetSectionByAreaPacket`` —— 10.3 素材抓包
-#: 证明真实客户端的素材流程是 ``11001（拉区域清单）→ 11009（直接扫）``，
-#: **不发 11003**；实测对素材区发 11003 服务端只回**空子包**
-#: （它只适用于降临/活动区，见 tasks/sweep.py）。新增 ``11001``。
+#: ★ 2026-10-17 修订：按风控规范彻底移除 11015/11017 首通战斗报文；
+#: 素材关卡定位为纯粹的日常扫荡，严格仅对已通关关卡扫荡，杜绝模拟战斗风险。
 ALLOWED_PACKET_NAMES: Final[tuple[str, ...]] = (
     "GetAllItemPacket",          # 2007 只读拉背包（数扫荡券）
     "GetAreaByDifficultyPacket", # 11001 按难度拉区域状态清单（素材入口，difficultyType=-3）
     "SweepSectionPacket",        # 11009 关卡扫荡
-    "FightingRequestPacket",     # 11015 创建战斗 Token（首通握手）
-    "FightingResultPacket",      # 11017 战斗结束结算（首通发奖）
 )
 
 ALLOWED_PACKET_IDS: Final[dict[str, int]] = {
@@ -70,8 +63,6 @@ PACKET_PURPOSE: Final[dict[int, str]] = {
     2007: "拉取背包全量列表（只读；只用来数扫荡券够不够扫）",
     11001: "拉取素材/元素关卡的区域状态清单（只读；校验目标区域是否开放）",
     11009: "素材/元素关卡零体力扫荡（零消耗/消耗每日免费次数）",
-    11015: "简单关卡安全首通握手（cheatCheck=0，无战斗复算）",
-    11017: "简单关卡安全首通结算（cheatCheck=0，零消耗）",
 }
 
 
@@ -392,17 +383,3 @@ from models.activity_stage import (
     SweepSectionRes,
     normalize_sweep_times,
 )
-from models.main_stage import (
-    FightingRequestPacket,
-    FightingResponseRes,
-    FightingResultPacket,
-    FightingResultRes,
-    FightDataClass,
-    make_battle_server_verify,
-)
-
-
-def make_fight_sign(fight_token: str, time_cost_sec: int, win_lose: int = 1) -> str:
-    """计算战斗结果签名：MD5(token + timeCost + winLose + "03120908")。"""
-    raw = f"{fight_token}{time_cost_sec}{win_lose}{FIGHT_SIGN_SALT}"
-    return hashlib.md5(raw.encode("utf-8")).hexdigest()

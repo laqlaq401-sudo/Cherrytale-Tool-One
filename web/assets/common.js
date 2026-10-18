@@ -44,6 +44,10 @@ window.Ct = (() => {
     // fail-closed 判据仍在后端 SpendPolicy（config.ALLOW_DIAMOND_SPEND）——
     // 存坏了顶多是"回到默认关闭"，永远落在安全一侧。
     allowDiamond: "cherrytale.allowDiamond",
+    // 主动任务卡片"哪些是展开的"（★ 2026-10-16）。
+    // 服务端是权威账本（services/ui_prefs.py，随 /api/tasks 下发），
+    // 这份 localStorage 只是"服务端不可用时"的兜底 —— 与 selection / 总闸同款。
+    uiPrefs: "cherrytale.uiPrefs.v1",
   };
 
   //: 玩家 / 角色头像的统一占位图（★ 2026-10-06 用户拍板）。
@@ -166,8 +170,17 @@ window.Ct = (() => {
     return location.origin;
   }
 
-  /** 统一的后端调用：拼 URL 参数、带头、解析错误负载为带 status 的 Error。 */
-  async function call(path, { method = "GET", body = null, params = null } = {}) {
+  /**
+   * 统一的后端调用：拼 URL 参数、带头、解析错误负载为带 status 的 Error。
+   *
+   * :param timeout: 可选的读超时（毫秒）。★ 2026-10-19 新增，**默认 0 = 不超时**。
+   *     只给"会挡住首屏 / 启动链"的只读查询用（宴席时段、活动候选、素材目录，
+   *     见 notes/task_list_first_paint_plan.md §P1）。不做全局默认值：轮询、
+   *     登录这类请求各有各的节奏，统一掐断反而会造出新的假故障。
+   *     超时抛出的 Error 带 ``timeout = true``（``status`` 为 0），
+   *     调用方据此把它归到"稍后补读"而不是真失败。
+   */
+  async function call(path, { method = "GET", body = null, params = null, timeout = 0 } = {}) {
     const url = new URL(path, getApiOrigin());
     if (params) {
       for (const [key, value] of Object.entries(params)) {
@@ -178,27 +191,46 @@ window.Ct = (() => {
     if (token) headers["X-Auth-Token"] = token; // 令牌只走请求头
     if (body !== null) headers["Content-Type"] = "application/json";
 
-    const response = await fetch(url, {
-      method,
-      headers,
-      body: body === null ? null : JSON.stringify(body),
-    });
+    const limit = Number(timeout) || 0;
+    const controller =
+      limit > 0 && typeof AbortController !== "undefined" ? new AbortController() : null;
+    const timer = controller ? setTimeout(() => controller.abort(), limit) : null;
 
-    const text = await response.text();
-    let payload = null;
     try {
-      payload = text ? JSON.parse(text) : null;
-    } catch {
-      payload = { detail: text };
-    }
+      const response = await fetch(url, {
+        method,
+        headers,
+        body: body === null ? null : JSON.stringify(body),
+        signal: controller ? controller.signal : undefined,
+      });
 
-    if (!response.ok) {
-      const error = new Error(`HTTP ${response.status}`);
-      error.status = response.status;
-      error.payload = payload;
+      const text = await response.text();
+      let payload = null;
+      try {
+        payload = text ? JSON.parse(text) : null;
+      } catch {
+        payload = { detail: text };
+      }
+
+      if (!response.ok) {
+        const error = new Error(`HTTP ${response.status}`);
+        error.status = response.status;
+        error.payload = payload;
+        throw error;
+      }
+      return payload;
+    } catch (error) {
+      // 只把"确实是被我们掐断的"翻译成超时；HTTP 错误（带 status）原样抛。
+      if (controller && controller.signal.aborted && !(error && error.status)) {
+        const timeoutError = new Error(`读取超时（${Math.round(limit / 1000)} 秒）`);
+        timeoutError.status = 0;
+        timeoutError.timeout = true;
+        throw timeoutError;
+      }
       throw error;
+    } finally {
+      if (timer) clearTimeout(timer);
     }
-    return payload;
   }
 
   // ------------------------------------------------------------------

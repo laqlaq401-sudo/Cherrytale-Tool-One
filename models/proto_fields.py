@@ -54,10 +54,10 @@ SOURCE_DUMP: Final[str] = "Cherrytale IL2CPP/dump.cs"
 TAGS_VERIFIED: Final[bool] = True
 
 #: 收录的协议类数量
-CLASS_COUNT: Final[int] = 162
+CLASS_COUNT: Final[int] = 204
 
 #: 收录的字段总数
-FIELD_COUNT: Final[int] = 1574
+FIELD_COUNT: Final[int] = 1732
 
 #: 协议类名 → 字段名（**按声明顺序排列**，顺序即编号顺序，从 1 开始）
 PROTO_FIELDS: Final[dict[str, tuple[str, ...]]] = {
@@ -1557,6 +1557,42 @@ PROTO_FIELDS: Final[dict[str, tuple[str, ...]]] = {
         'buyedCount',
         'settlement_time',
     ),
+    'WuDouReplayPacket': (
+        'targetPid',
+        'teamID',
+        'myRanking',
+        'targetRanking',
+    ),
+    'WuDouReplayRes': (
+        'errorCode',
+        'replayResult',
+        'challenge_time',
+        'myRanking',
+        'npc_times',
+        'challenge_times',
+        'gotList',
+        'winRewardList',
+    ),
+    'WuDouRankPacket': (
+        'targetPid',
+        'myRanking',
+        'targetRanking',
+        'isBlock',
+    ),
+    'WuDouRankRes': (
+        'errorCode',
+    ),
+    'PVPListClass': (
+        'playerID',
+        'ranking',
+        'icon',
+        'name',
+        'fighting',
+        'integral',
+        'allianceName',
+        'worship',
+        'allianceTitle',
+    ),
     'GetYimoState': (
     ),
     'GetYimoStateRes': (
@@ -1579,6 +1615,134 @@ PROTO_FIELDS: Final[dict[str, tuple[str, ...]]] = {
     'YimoBossDailyRewardClass': (
         'rewardID',
         'rewardState',
+    ),
+    'PVPVerifyPacket': (
+        'battleToken',
+        'reportSid',
+        'winOrLose',
+        'atkTeamPlayId',
+        'defTeamPlayId',
+        'battleType',
+        'message',
+        'sectionID',
+        'fightRecord',
+        'fightData',
+    ),
+    'PVPResultsClass': (
+        'myRanking',
+        'myIntegral',
+        'victory',
+        'winning_streak',
+    ),
+    'ChallengePacket': (
+        'actionType',
+        'playerID',
+        'teamID',
+    ),
+    'ChallengeRes': (
+        'errorCode',
+        'loseIntegral',
+        'winIntegral',
+        'items',
+        'fightToken',
+        'fightGlobalEffectClass',
+        'opponentAssemble',
+        'mineAssemble',
+    ),
+    'ChallengeResultPacket': (
+        'result',
+        'type',
+        'playerID',
+        'fightingNumber',
+        'fightToken',
+        'battleResult',
+        'token',
+    ),
+    'ChallengeResultRes': (
+        'errorCode',
+        'myResults',
+    ),
+    'ExperimentInfo': (
+    ),
+    'ExperimentInfoClass': (
+        'sectionID',
+        'monsterHpList',
+        'monster_mana',
+        'roleHpList',
+        'role_mana',
+        'finalTestCount',
+        'restoreCount',
+        'mirrorBuffID',
+    ),
+    'ExperimentInfoRes': (
+        'errorCode',
+        'infoClass',
+        'sectionList',
+        'isAutoReward',
+        'getRewardList',
+        'nextResetTime',
+    ),
+    'ExperimentTeamClass': (
+        'position',
+        'hp',
+    ),
+    'ExperimentRoleClass': (
+        'role_sid',
+        'hp',
+        'isTeam',
+    ),
+    'ExperimentFightingRequest': (
+        'sectionID',
+        'version',
+        'teamSid',
+        'mirrorBuffID',
+        'mirrorMachineID',
+    ),
+    'ExperimentFightingRequestRes': (
+        'errorCode',
+        'fightToken',
+        'fightGlobalEffectClass',
+        'mineAssemble',
+    ),
+    'ExperimentFightingResult': (
+        'winLose',
+        'monsterHpList',
+        'monster_mana',
+        'roleHpList',
+        'role_mana',
+        'battleResult',
+        'fightData',
+    ),
+    'ExperimentFightingResultRes': (
+        'errorCode',
+        'rewardList',
+        'costObjList',
+    ),
+    'YimoBattleRequest': (
+        'part',
+        'bossLv',
+    ),
+    'YimoBattleRequestRes': (
+        'errorCode',
+        'fightToken',
+        'hpRate',
+        'topScore',
+        'fightGlobalEffectClass',
+        'mineAssemble',
+    ),
+    'YimoBattleResult': (
+        'fightToken',
+        'dmgHpRate',
+        'score',
+        'battleResult',
+        'token',
+    ),
+    'YimoBattleResultRes': (
+        'errorCode',
+        'rewardList',
+        'rank',
+        'totalValue',
+        'remainCount',
     ),
     'GetAllItemPacket': (
     ),
@@ -1958,6 +2122,84 @@ PROTO_FIELDS: Final[dict[str, tuple[str, ...]]] = {
     'GrandLineGetCountRewardRes': (
         'errorCode',
         'getObjList',
+    ),
+    'UpgradeSkillPacket': (
+        'roleSid',
+        'skillPlace',
+        'targetLV',
+    ),
+    'UpgradeSkillRes': (
+        'errorCode',
+        'itemClass',
+    ),
+    'UpRoleExpPacket': (
+        'roleSid',
+        'itemClass',
+    ),
+    'UpRoleExpRes': (
+        'errorCode',
+        'roleClass',
+        'costList',
+    ),
+    'SkillClass': (
+        'activeLV',
+        'loopLV',
+        'passive1LV',
+        'passive2LV',
+        'awakeningLV',
+        'autoSkill',
+    ),
+    'StrengthenEquipPacket': (
+        'equipSid',
+        'count',
+    ),
+    'StrengthenEquipRes': (
+        'errorCode',
+        'itemClass',
+    ),
+    'GetAllEquipPacket': (
+    ),
+    'GetAllEquipRes': (
+        'equipList',
+    ),
+    'UsePresentPacket': (
+        'roleSid',
+        'itemId',
+        'useTime',
+        'itemClass',
+    ),
+    'UsePresentRes': (
+        'errorCode',
+        'getList',
+        'addExp',
+    ),
+    'FriendOperationPacket': (
+        'actionType',
+        'playerID',
+    ),
+    'FriendOperationRes': (
+        'errorCode',
+        'friendList',
+        'itemList',
+    ),
+    'GetFriendListPacket': (
+        'actionType',
+    ),
+    'GetFriendListRes': (
+        'friendClass',
+        'inviteCode',
+        'blockCode',
+    ),
+    'GetSecretSectionPacket': (
+    ),
+    'GetSecretSectionRes': (
+        'SecretSectionList',
+    ),
+    'SecretSectionClass': (
+        'sectionID',
+        'sectionState',
+        'limitItemCount',
+        'puzzleFragBonus',
     ),
 }
 # ---------------------------------------------------------------------------

@@ -425,6 +425,7 @@ def cmd_run_tests() -> int:
     """运行发版前快速回归核心单测。"""
     print("\n🧪 正在运行发版前快速回归单测...")
     test_files = [
+        "tests/test_architecture_guard.py",
         "tests/test_webapi_app.py",
         "tests/test_android_app.py",
         "tests/test_services_task_spec.py",
@@ -635,10 +636,27 @@ def cmd_build_pc() -> int:
         print("[ERROR] 版本号不一致，请先统一版本号！")
         return 1
 
-    py314 = find_python_cmd("3.14")
-    print(f"\n🖥️  正在执行 PC 端打包 (PyInstaller via {' '.join(py314)})...")
+    py311 = find_python_cmd(UNIFIED_PYTHON_VERSION)
+    print("\n🛡️  正在执行发布前架构合规性检查 (test_architecture_guard.py)...")
+    guard_res = run_process_safely([*py311, "-m", "pytest", "tests/test_architecture_guard.py", "-q"])
+    if guard_res.returncode != 0:
+        print(guard_res.stdout)
+        print(guard_res.stderr)
+        print("[FAIL] 架构合规性检查未通过：存在生产模块非法依赖 tools！打包终止。")
+        return 1
+    print("  [OK] 架构合规性校验通过（生产运行时无 tools 依赖）。")
+
+    print("\n🩹  正在确保 pywebview WinForms 补丁已就绪 (patch_pywebview_winforms.py)...")
+    patch_res = run_process_safely([*py311, "tools/patch_pywebview_winforms.py"])
+    if patch_res.returncode != 0:
+        print(patch_res.stderr)
+        print("[WARN] pywebview 补丁应用未成功，可能会影响原生无边框窗口启动。")
+    else:
+        print("  [OK] pywebview WinForms 补丁已就绪。")
+
+    print(f"\n🖥️  正在执行 PC 端打包 (PyInstaller via {' '.join(py311)})...")
     res = run_process_safely(
-        [*py314, "-m", "PyInstaller", "CherrytaleTool.spec", "--noconfirm"]
+        [*py311, "-m", "PyInstaller", "CherrytaleTool.spec", "--noconfirm"]
     )
     if res.returncode != 0:
         print(res.stderr)

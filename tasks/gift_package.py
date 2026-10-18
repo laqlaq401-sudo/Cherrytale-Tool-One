@@ -195,8 +195,12 @@ class FreeGiftTask(BaseTask):
 
         # 月卡那条**永远排在最后**：它是"有没有买月卡"的事实陈述，
         # 不是这次领取成败的主线（即便领不到也不算本任务失败）。
-        if monthly_line:
-            claimed.append(monthly_line)
+        # ★ 2026-10-18：**不再 append 进 claimed** —— 旧写法把它算进
+        # "免费礼包全部领取成功（N 个）"，又因为下面的 `message += monthly_line`
+        # 重复输出一遍。真机日志曾是：
+        #   "…领取成功（3 个）：…每日免费赠礼…；…每日免费钻石…；
+        #    月卡礼包（未购买月卡）；月卡礼包（未购买月卡）"
+        # 实际只有 2 个免费礼包领到，月卡那行既不该计数、也不该出现两次。
 
         if not free_gifts:
             message = (
@@ -213,9 +217,8 @@ class FreeGiftTask(BaseTask):
             message = monthly_line
         else:
             message = f"免费礼包全部领取成功（{len(claimed)} 个）：" + "；".join(claimed)
-
-        if monthly_line and claimed:
-            message += f"；{monthly_line}"
+            if monthly_line:
+                message += f"；{monthly_line}"
 
         return TaskResult(
             task=self.name,

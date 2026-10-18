@@ -14,7 +14,7 @@ from typing import Any, Final, Sequence
 
 import webapi.app as _app
 #: 应用版本（与 webapi/app.py 保持同步，供 tools/release.py 统一管理）
-APP_VERSION: Final[str] = "1.0.0"
+APP_VERSION: Final[str] = "1.1.0"
 
 from webapi.app import (
     DEFAULT_PORT,

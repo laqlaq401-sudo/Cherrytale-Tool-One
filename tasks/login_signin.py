@@ -6,10 +6,15 @@
 
 * **不**用 ``@register_task`` 注册 —— 不进 ``/api/tasks``，前端没有卡片、
   没有复选框、没有开关；
-* 由登录成功后的固定钩子调用（``tasks/login.py`` 与
-  ``webapi/app.py::login_enter`` 的直连快速路径），**登录即执行**；
-* 结果只写一条 ✔/✘ 摘要日志（``tasks.login_signin`` logger，经 root handler
-  进开发者日志流），**不进运行视图**（结果流水仍只显示用户勾选的任务）。
+* 由**三处**固定钩子调用（2026-10-17 补第三处，根因见
+  ``notes/login_signin_trigger_gap.md``）：① ``tasks/login.py``（真实登录任务
+  跑完，plan_only 早退不触发）、② ``webapi/app.py::login_enter`` 的直连快速
+  路径、③ ``services/runner.py::run_tasks`` —— 「当天第一次真正开始执行批次」的
+  **运行侧触发**（会话持久化的日常根本不经过登录页，①②都不会发生；
+  方案见 ``notes/login_signin_run_trigger_plan.md``）；
+* 结果写一条 ✔/✘ 摘要日志（``tasks.login_signin`` logger，经 root handler
+  进开发者日志流）；被运行侧触发时再经 ``emit`` 参数把这一行写进该次运行的
+  **说明流**（仍不会多出一个任务步骤 —— 结果流水仍只显示用户勾选的任务）。
 
 【"每天只执行一次"的口径 —— 自然日 0 点，与日常任务的 05:00 游戏日不同】
 登入奖励的服务端结算换日是**自然日 0 点**（2026-10-06 抓包：03:09 登入即
@@ -35,6 +40,7 @@ import json
 import logging
 import threading
 import time
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Final
@@ -179,17 +185,42 @@ def describe_credits(res: GetActivityLoginRewardsRes) -> str:
 
 
 # ---------------------------------------------------------------------------
+# 结果行的旁路出口（★ 2026-10-17：运行侧触发要把 ✔/✘ 写进批次说明流）
+# ---------------------------------------------------------------------------
+def _safe_emit(emit: Callable[[str], None] | None, text: str) -> None:
+    """把结果行交给旁路出口；出口抛错也**绝不影响签到主流程**。
+
+    【为什么单独包一层】本模块的核心契约是"绝不抛异常"。出口
+    （运行侧触发的 ``_note``）是锦上添花 —— 它炸了只该丢一条 debug 日志，
+    不该把契约破在最后一步上。
+    """
+    if emit is None:
+        return
+    try:
+        emit(text)
+    except Exception:  # noqa: BLE001 —— 见 docstring
+        _LOGGER.debug("登录签到结果行的旁路出口抛错（忽略）", exc_info=True)
+
+
+# ---------------------------------------------------------------------------
 # 对外的唯一入口
 # ---------------------------------------------------------------------------
 def run_if_first_login_today(
-    session_state: Any, *, now: datetime | None = None, path: Path | None = None
+    session_state: Any,
+    *,
+    now: datetime | None = None,
+    path: Path | None = None,
+    emit: Callable[[str], None] | None = None,
 ) -> None:
     """每个角色每自然日第一次进游戏后，发一次 33055 并汇报入账。
 
-    :param session_state: 刚就绪的 ``GameSessionState``（登录任务或
-        ``login_enter`` 直连路径产出的都行）。
+    :param session_state: 刚就绪的 ``GameSessionState``（登录任务 /
+        ``login_enter`` 直连路径 / 运行侧触发产出的都行）。
     :param now: "今天"的基准（测试注入）。
     :param path: 记账文件（测试注入；默认 :obj:`config.LOGIN_SIGNIN_STATE_FILE`）。
+    :param emit: 结果行的**旁路出口**（可选）：✔ 成功 / ✘ 失败各调一次，供
+        ``services/runner.py`` 的运行侧触发把这一行写进批次说明流；
+        "无区服角色 / 今天已发过"的跳过**不调**（保持静默）。
 
     .. warning::
        **绝不向调用方抛异常** —— 它跑在登录主流程的正后方，签到查询失败
@@ -226,8 +257,10 @@ def run_if_first_login_today(
         # 查询成功就记账（无论有无新入账）：33055 幂等，记账只是"少打一遍
         # 冗余查询"的优化，失败路径不走到这里 —— 下次登录会自动重试。
         _mark_done(key, now=now, path=path)
-        _LOGGER.info("%s", describe_credits(res))
+        line = describe_credits(res)
+        _LOGGER.info("%s", line)
+        _safe_emit(emit, line)
     except Exception as exc:  # noqa: BLE001  见函数 docstring 的 warning
-        _LOGGER.warning(
-            "%s ✘ 失败：%s（不影响登录；下次登录自动重试）", TITLE, exc
-        )
+        line = f"{TITLE} ✘ 失败：{exc}（不影响登录；下次登录自动重试）"
+        _LOGGER.warning("%s", line)
+        _safe_emit(emit, line)

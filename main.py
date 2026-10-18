@@ -423,6 +423,10 @@ def cmd_run(args: argparse.Namespace) -> int:
         # 荣耀之巅的任务级参数，由上面的 ``task_params_from_cli`` 取出。
         # 旗标仍留在 ``run`` 子命令上，所以命令行用法一字未变。
         verbose=bool(getattr(args, "verbose", False)),
+        # ★ 2026-10-17（方向 A）：命令行运行也算"进游戏执行" —— 允许一次
+        # 「登录签到（每日+活动）」补触发（幂等、每自然日一次；演练与
+        # ``run login`` 批次由 runner 侧短掉，见 runner.py::_settle_login_signin）。
+        settle_login_signin=True,
     )
 
     context: run_runner.RunContext | None = None
@@ -558,13 +562,27 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     run_parser.add_argument(
-        "--interval",
-        type=float,
+        "--strategy",
+        dest="strategy",
+        choices=("lowest_power", "npc_first", "rank_first"),
         default=None,
         help=(
-            "荣耀之巅：每场之间的间隔秒数（默认取 config，15 秒）。"
-            "网页上对应「主动任务 → 荣耀之巅」卡片里的「每场间隔」"
+            "天命对决：选人策略（lowest_power 默认低战优先，npc_first 优先NPC，rank_first 冲榜）"
         ),
+    )
+    run_parser.add_argument(
+        "--npc-first",
+        dest="strategy",
+        action="store_const",
+        const="npc_first",
+        help="天命对决：优先挑选 NPC 陪练（等价于 --strategy npc_first）",
+    )
+    run_parser.add_argument(
+        "--rank-first",
+        dest="strategy",
+        action="store_const",
+        const="rank_first",
+        help="天命对决：优先挑选名次靠前的对手（等价于 --strategy rank_first）",
     )
     run_parser.add_argument(
         "--area",
@@ -585,7 +603,20 @@ def build_parser() -> argparse.ArgumentParser:
             "（活动关反复发「扫荡 5 次」直到体力清空；素材关直到次数耗尽；"
             "活动关用 -1 时**必须**同时给 --section）。"
             "扫荡会真实扣除体力与扫荡券，所以必须显式给出；"
-            "实际次数还会被 config.SWEEP_MAX_TIMES 与剩余体力二次削减"
+            "实际次数还会被 config.SWEEP_MAX_TIMES 与剩余体力二次削减。"
+            "★ 钻石购买任务（购买体力 / 竞技场 / 天命对决 / 荣耀之巅）也用它："
+            "**至少 1 次**，不给 = 1；0 会被任务直接拒绝（2026-10-18 起不再表示只读）"
+        ),
+    )
+    run_parser.add_argument(
+        "--max-cost",
+        dest="max_cost",
+        type=int,
+        default=None,
+        metavar="钻石数",
+        help=(
+            "钻石购买：本次最多允许消耗的钻石数（0 / 不给 = 不限）。"
+            "目前用于「购买体力」（网页对应「钻石使用 → 购买体力」的「钻石消耗上限」）"
         ),
     )
     run_parser.add_argument(
@@ -666,16 +697,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="主线推图：本次最多推进关卡数（默认 0 = 不限，直到体力耗尽或遇到校验关卡）",
     )
     run_parser.add_argument(
-        "--delay-min",
-        type=float,
+        "--daily-only",
+        action="store_true",
         default=None,
-        help="主线推图：每关模拟战斗时间下限（秒，默认 15.0）",
+        help="失控炼成阵：仅日常打卡（默认开启，上报保底浮动得分 1200~2800 且 Boss 扣血万分比锁定为 0）",
     )
     run_parser.add_argument(
-        "--delay-max",
-        type=float,
-        default=None,
-        help="主线推图：每关模拟战斗时间上限（秒，默认 25.0）",
+        "--no-daily-only",
+        dest="daily_only",
+        action="store_false",
+        help="失控炼成阵：关闭仅日常打卡模式，恢复按队伍战力推导得分并科学计算 Boss 扣血",
     )
     run_parser.set_defaults(func=cmd_run)
 

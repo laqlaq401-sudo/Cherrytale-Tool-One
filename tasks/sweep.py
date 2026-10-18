@@ -782,6 +782,10 @@ class SweepActivityTask(BaseTask):
         verify_token = make_fight_verify_token(fight_token, time_cost_sec, win_lose=1)
         server_verify = make_battle_server_verify(candidate.section_id)
 
+        fighting_power = random.randint(26000, 45000)
+        damage = int(fighting_power * random.uniform(3.5, 5.5))
+        combo_count = random.randint(18, 38)
+
         result_packet = FightingResultPacket(
             fightData=FightDataClass(
                 token=fight_token,
@@ -790,14 +794,14 @@ class SweepActivityTask(BaseTask):
             winLose=1,
             starCount=[1, 1, 1],
             timeCostSec=time_cost_sec,
-            ComboRecord=BattleAchiComboClass(totalComboCount=0, killBossCount=0),
-            InterupRecord=BattleAchiInterupClass(totalInterupCount=1),
-            AwakeRecord=BattleAchiAwakeClass(totalInterupCount=0),
+            ComboRecord=BattleAchiComboClass(totalComboCount=combo_count, killBossCount=0),
+            InterupRecord=BattleAchiInterupClass(totalInterupCount=random.randint(1, 3)),
+            AwakeRecord=BattleAchiAwakeClass(totalInterupCount=random.randint(0, 2)),
             battleResult=BattleResultClass(
                 teamId=TEAM_TYPE_PVE1,
-                fightingPower=0,
+                fightingPower=fighting_power,
                 damageContent="",
-                damage=0,
+                damage=damage,
                 yimoLv=-1,
                 myTeamRecord=[],
                 enemyTeamRecord=[],
@@ -959,12 +963,14 @@ class SweepActivityTask(BaseTask):
             or last.is_success
             or last.errorCode in UNTIL_EMPTY_NATURAL_STOP
         )
+        # ★ 2026-10-18：不再说"N 轮、每轮按体力削峰" —— 那是实现细节；
+        # 用户只需要"扫了多少次、为什么停、还剩多少体力"。
         message = (
             f"清空体力完成：对「{candidate.section_name or '该关卡'}」共扫 {total} 次"
-            f"（{len(rounds)} 轮，每轮按体力削峰、上限 {UNTIL_EMPTY_ROUND_TIMES} 次）："
+            f"（分批进行，每批最多 {UNTIL_EMPTY_ROUND_TIMES} 次）："
             f"{reason}"
             + (
-                f"（剩余体力 {self.energy_left}）"
+                f"，剩余体力 {self.energy_left}"
                 if self.energy_left is not None
                 else ""
             )

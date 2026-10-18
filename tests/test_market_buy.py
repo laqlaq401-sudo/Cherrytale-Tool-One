@@ -198,7 +198,9 @@ class TestStoreList:
 
         assert result.ok is False
         assert "errorCode=-2" in result.message
-        assert f"storeType={MARKET_STORE_TYPE}" in result.message
+        # ★ 2026-10-18：storeType 是排查用的内部参数，不再进用户文案；
+        # 它仍在 data 里（下一行）与开发者日志里。
+        assert "storeType=" not in result.message
         assert "notExist" in result.message
         assert result.data["error_text"] == "商铺不存在（notExist）"
         assert result.data["store_type"] == MARKET_STORE_TYPE

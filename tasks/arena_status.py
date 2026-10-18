@@ -91,10 +91,10 @@ class ArenaStatusTask(BaseTask):
             return TaskResult(
                 task=self.name,
                 ok=True,
-                message=(
-                    f"竞技场（只读）：{home.summary()}。"
-                    "本任务不进战、不购买次数 —— 战斗需要客户端本地结算，见 notes/battle_engine_project.md"
-                ),
+                # ★ 2026-10-18：删掉文案里的内部文档路径
+                # （旧文案直接写着 "见 notes/battle_engine_project.md"）——
+                # 用户看不到也不需要看仓库里的笔记。
+                message=f"竞技场（只读）：{home.summary()}。本任务只查状态，不进战、不购买次数",
                 data={
                     "challenge_count": home.challengeCount,
                     "buyed_count": home.buyedCount,

@@ -264,6 +264,7 @@ web/assets/app.js  「拉取候选」按钮
 | `tasks/sweep.py` | `SweepCandidate.as_view()`、`BlockedSection.as_view()`、模块级 `area_view()`；只读分支追加 `data["areas"]` / `data["area"]` / `data["sections"]`（**计数键保留**，旧调用方不受影响） |
 | `webapi/app.py` | `GET /api/activity/preview`（`scope` 仅实现 `current`，其它值明确 400） |
 | `services/task_spec.py` | `ParamSpec.choices`（固定档位）与 `ParamSpec.options_source`（动态候选来源）；`param_view()` 透传；`times.choices=(0,1,5,10)`、`area.options_source="activity_areas"`、`section.options_source="activity_sections"` |
+| `services/task_spec.py`（★ 2026-10-18） | `ParamSpec.minimum`（数值**下限**，只约束界面、不参与 `coerce`）；`param_view()` 透传 `minimum`。四个 `buy_*` 的 `times` 用它把「购买次数」从档位下拉改成**步进器**（下限 1、取消 0 次/只读）；前端 `numberStepper` 据此设 `input.min`、clamp、空值落回下限、减号到下限 `disabled`，旧存档的 0 在渲染时归位 1 |
 | `web/assets/app.js` | `renderChoiceParam()` / `renderCandidateParam()`（下拉 + 手输 + 「拉取候选」+ 状态行）；候选缓存 `state.activityOptions`；换区域时清空关卡候选 |
 | `web/assets/styles.css` | `.param-tools`（按钮与状态行的排版） |
 
@@ -284,6 +285,9 @@ web/assets/app.js  「拉取候选」按钮
    sectionID / 候选编号（`main.py` 是手写 argparse，不读规格表）。
    档位同理：`choices` 只约束界面，`coerce(3)` 依旧返回 `3`，
    由 `tests/test_services_task_spec.py::TestParamViewHints` 守着。
+   下限（`minimum`）也是同一条哲学：它只让步进器停在 1、把 0 归位，
+   **不会**让 `coerce(0)` 报错 —— 拒在哪一层由任务自己决定
+   （`tasks/buy_*.py` 对 `times < 1` 直接返回 `ok=False`，不静默升成 1 去真花钻石）。
 
 ### 9.4 只读 ≠ 零请求
 
@@ -659,10 +663,76 @@ python main.py run top_pvp_battle --keep-battle-animation
 无头 Edge `--dump-dom`（主界面渲染后）：`>打几场<`（带 `param--danger` 红框）、
 `>每场间隔（秒）<` 都在荣耀之巅卡片里；**`保留战斗演出` 出现 0 次**。
 
+### 10.11 只读查询给写批次「让行」（2026-10-18）
+
+**现象**：桌面端启动后，界面显示"已受理运行"，但第一个任务要等很久才开始（实测 10~30 秒）。
+
+**根因不是网络**，是启动时序 + 单闸门：
+
+1. `app.js::boot` 先发 `void loadPlayer({full:true})`（不 await），后端 `/api/player`
+   在 HTTP 线程里**同步串行**跑 6 个只读任务（wallet / roles / arena_status /
+   wudou_status / yimo_status / top_pvp_status），全程独占 `RunManager._gate`；
+2. 紧接着 `runAutomation("启动")` 提交的 `/api/run` 只能入队，worker 必须等这 6 个只读任务跑完；
+3. `run_tasks` 批内还有 `BATCH_TASK_INTERVAL` 0.6~1.2s 的固定间隔（6 个任务 → 至少 3~6 秒）；
+4. 当天第一次批次开头还有 `_settle_login_signin` 的一次 33055（10-17 新增，超时上限 30s）。
+
+`2026-10-04` 那次修复只去掉了 boot 里的 `await`，让提交提前，但闸门仍被读占着，延迟没有消失。
+
+**契约（本次）**：
+
+| 层 | 行为 |
+|---|---|
+| `webapi/state.py::run_inline` | 进闸门前先看 `is_running`：队列里有批在排队/执行 → **立刻** `RunBusyError`（409），连试都不试。写者因此不会被读抢先。 |
+| `app.js::boot` | 先 `await tasksReady` → `await runAutomation("启动")`；自动批已受理（`state.running`）则**不发** `loadPlayer`，只记 `bootFullPlayerPending = true`；没有自动批才立刻读。 |
+| `app.js::pollOnce` | "刚跑完"分支用 `full = touchedTopPvp || bootFullPlayerPending` 补读一次（含荣耀之巅，等价于原来 boot 的统一读取）；补读被 409 挡下就把欠账还回去，下一批跑完再补。 |
+| `app.js::loadPlayer` | 新增 `quiet`：自动路径静默吞 409（预期内），手点「刷新」才 toast「任务正在执行，信息面板会在运行结束后自动刷新」；返回布尔供欠账判断。 |
+
+**影响**：运行期间 `/api/player`、`/api/main_stage/status`、`/api/banquet/status`
+都会**更早**拿到 409（不再有"偶尔抢赢"）。前者按上面的补读处理，宴席已有静默 + 退避重试，
+主线状态在下一次跑完时刷新。
+
+**没有改成"并发"**：`services/cancellation.py` 的 `_current` 是全局单令牌（并发时
+「停止执行」只能停最后一批）、`_temporary_credentials` 用进程级 `os.environ`（并发含
+login 会串号）、批内间隔本就是风控节奏。让行只调整**谁先拿闸门**，这些约束一个都没动。
+
+**回归**：`tests/test_webapi_state_queue.py::test_run_inline_yields_to_a_running_batch`
+（有批在跑 → 立刻 409，且没把队列挤掉）、
+`::test_run_inline_still_runs_when_queue_is_empty`（空闲时只读照常）。
+
 **命令行用法一字未变**（本次改动的硬约束）：
 `python main.py run top_pvp_battle --battles 2 --interval 0.5` 照旧可用；
 唯一区别是"别的任务误加 `--battles`"现在会被 `normalize_params` 丢弃并打 WARNING
 （过去是静默忽略）。
+
+### 10.12 任务清单「先画后补」：首帧只等 `/api/tasks`（2026-10-19）
+
+**现象**：打开程序 →「自动任务」「主动任务」两栏只剩 HTML 里写死的「…读取中…」，
+卡片全空；等 2~5 秒才一次性出现。
+
+**根因**：`loadTasks()` 把三次补水读都排在 `renderTaskGroups()` 之前，其中
+`await ensureBanquetStatus()`（2026-10-16「宴席登录后自动读一次」）是一次真实的
+32007→32008 往返（`tmp/webquiet.log` 实测 ~2s），而宴席状态只存内存
+（`state.banquetMeals` 不持久化）⇒ **每次开页面必发**。活动候选在缓存过期时
+（每周三 20:00 后 / 首次）还要再串两次 `run_inline`（实测 ~3s）。
+
+**契约（本次）**：
+
+| 位置 | 行为 |
+|---|---|
+| `app.js::loadTasks` | `reconcileSelection()` 之后**立刻** `renderTaskGroups()`（只依赖 `/api/tasks`，本机 ms 级）；三个 `ensure*` 仍**顺序 await**（同一把闸门，并行会互相 409；且 boot 的自动批要先等读完成）。 |
+| `app.js::refreshHydratedCards` | 补水结束后只重画"参数里有 `options_source`"的卡片 + `syncBbqPanel()` + `refreshDerivedViews()`；找不到卡片才退回整组重建。 |
+| `state.hydrating` | 首帧到补水结束之间为 true：参数下拉显示「（正在读取…）」、宴席卡显示「正在读取…」，不再谎报"尚未读取 / 请先登录"。 |
+| `common.js::call` | 新增**可选** `timeout`（默认 0=不超时，不做全局默认）。只给宴席/活动/素材三处传 `READ_TIMEOUT_MS = 8000`；超时抛 `error.timeout = true`。 |
+| `refreshBanquetStatus` | 超时与 409 同走"欠一次 + 退避补读"；卡头文案按 `banquetPendingReason` 分开写（`timeout` →「读取超时，稍后自动补读」，`busy` →「任务运行中，结束后自动读取」）。 |
+
+**验证**：`tmp/verify_first_paint.py`（mock 后端 + CDP，不入库）——
+活动延迟 1.2s / 素材 0.6s / 宴席 2.0s 时，卡片在 300ms 内出现，此时下拉只有
+「（正在读取…）」；补水完成后下拉 3 项、宴席卡回到真实状态。
+`HANG_BANQUET=1`（宴席延迟 20s > 8s 超时）时，13s 后宴席卡显示
+「读取超时，稍后自动补读」，页面不再无限转圈。
+
+**不要退回去**：把任何 `ensure*` 挪回 `renderTaskGroups()` 之前、或改成
+`Promise.all` 并行，都会重现"打开就是读取中"或"候选互相 409"。
 
 
 

@@ -7,8 +7,9 @@
 
 【本文件最重要的两条断言（其余都是围绕它们的细节）】
 
-1. **只读模式（``battles=0``，默认）绝不发挑战包** —— 用一个"记账"的传输替身
-   记录每个出站消息号，然后逐个核对；
+1. **``battles=0`` = 打到次数用完**（★ 2026-10-18 语义变更，旧行为是"只读"）——
+   用一个"记账"的传输替身记录每个出站消息号，核对其顺序与"何时停"；
+   "只看不打"由 ``tests/test_tasks_top_pvp_status.py`` 单独覆盖；
 2. **出站消息号集合 ⊆ 白名单，且永远不出现 39005（花钻石买次数）**。
    这不是"相信代码写对了"，而是**从请求字节里解出 packetID** 再核对 ——
    只有这样才能真正挡住"某处顺手加了个购买分支"。
@@ -46,6 +47,12 @@ CHALLENGE_ID = 39007
 TEAM_EDIT_ID = 39011
 TOGGLE_ID = 39019
 BUY_ID = 39005
+
+
+@pytest.fixture(autouse=True)
+def _zero_interval(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(config, "TOP_PVP_INTERVAL_MIN", 0.0)
+    monkeypatch.setattr(config, "TOP_PVP_INTERVAL_MAX", 0.0)
 
 
 # ---------------------------------------------------------------------------
@@ -139,7 +146,11 @@ def sent_packet_ids(recorded: list[bytes]) -> list[int]:
 
 
 def make_task(**kwargs: object):
-    """构造任务（默认只读：``RunOptions()`` 的 battles=0）。"""
+    """构造任务（``RunOptions()`` 默认 battles=0 = 打到次数用完）。
+
+    ⚠️ 除了"第一个包就失败"这类用例，**请显式给 ``battle_options(N)``** ——
+    0 场现在会一直打到服务端返回 -1，而测试替身默认永远回"成功"。
+    """
     options = kwargs.pop("run_options", RunOptions())
     return create_task(
         "top_pvp_battle",
@@ -150,49 +161,68 @@ def make_task(**kwargs: object):
 
 
 # ---------------------------------------------------------------------------
-# ① 只读模式（默认）：一个消耗次数的包都不许发
+# ① ``battles=0`` = 打到次数用完（★ 2026-10-18 语义变更）
 # ---------------------------------------------------------------------------
-class TestReadOnlyMode:
-    def test_sends_only_home_packet(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        recorded = patch_transport(
-            monkeypatch, lambda number, body: envelope_bytes(HOME_ID, home_payload())
-        )
-        result = make_task().run()
+class TestExhaustMode:
+    """用户 2026-10-18 要求：0 场与其他战斗任务一致 = 打到没次数为止。
 
-        assert result.ok is True
-        assert sent_packet_ids(recorded) == [HOME_ID], "默认只读只该发一个 39001"
+    旧行为（0 = 只读）已被删除，"只看不打"搬去 ``tasks/top_pvp_status.py``
+    （白名单里连 39007 都没有，见 ``tests/test_tasks_top_pvp_status.py``）。
+    """
 
-    def test_no_challenge_packet(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        recorded = patch_transport(
-            monkeypatch, lambda number, body: envelope_bytes(HOME_ID, home_payload())
-        )
-        make_task().run()
-
-        assert CHALLENGE_ID not in sent_packet_ids(recorded)
-
-    def test_skip_toggle_is_not_written_in_read_only(
+    def test_zero_battles_fights_until_server_says_no_times(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """只读模式承诺"什么都不改"：即使开关是关闭的，也不去写 39019。"""
+        """0 场 → 一直打，直到服务端返回 -1；绝不用 -1 那次冒充"打过一场"。"""
         recorded = patch_transport(
             monkeypatch,
-            lambda number, body: envelope_bytes(
-                HOME_ID, home_payload(is_skip_battle=False)
+            make_handler(
+                home_skip=True,
+                challenge_script=[{}, {}, {}, {"error_code": -1}],
             ),
         )
-        result = make_task().run()
+        result = make_task(
+            run_options=RunOptions(battles=0, max_battles=10, interval_seconds=0)
+        ).run()
+        ids = sent_packet_ids(recorded)
 
-        assert TOGGLE_ID not in sent_packet_ids(recorded)
-        assert "未改动" in str(result.data.get("skip_battle_note", ""))
+        assert ids.count(CHALLENGE_ID) == 4, "3 场成功 + 1 次被拒，共 4 个挑战包"
+        assert BUY_ID not in ids, "次数不足后不许转去购买"
+        assert result.ok is True
+        assert result.data["battles_done"] == 3, "-1 那次不算打过一场"
+        assert result.data["planned_battles"] == -1, "-1 = 打到次数用完（与其它战斗任务一致）"
+        assert "次数已用完" in result.message
+        assert "共打 3 场" in result.message
 
-    def test_result_marks_read_only(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        patch_transport(
-            monkeypatch, lambda number, body: envelope_bytes(HOME_ID, home_payload())
+    def test_zero_battles_writes_skip_toggle_when_needed(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """0 场现在**会真打**，所以"跳过战斗演出"该写就写（旧只读分支已删）。"""
+        recorded = patch_transport(
+            monkeypatch,
+            make_handler(home_skip=False, challenge_script=[{"error_code": -1}]),
         )
-        result = make_task().run()
+        make_task(
+            run_options=RunOptions(battles=0, max_battles=10, interval_seconds=0)
+        ).run()
 
-        assert result.data["mode"] == "read_only"
-        assert "只读" in result.message
+        assert sent_packet_ids(recorded)[:2] == [HOME_ID, TOGGLE_ID]
+
+    def test_zero_battles_goes_through_team_edit_first(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """挑战前必发 39011 —— 0 场模式同样要镜像真实客户端顺序。"""
+        recorded = patch_transport(
+            monkeypatch,
+            make_handler(home_skip=True, challenge_script=[{"error_code": -1}]),
+        )
+        make_task(
+            run_options=RunOptions(battles=0, max_battles=10, interval_seconds=0)
+        ).run()
+        ids = sent_packet_ids(recorded)
+
+        assert TEAM_EDIT_ID in ids
+        assert ids.index(TEAM_EDIT_ID) < ids.index(CHALLENGE_ID)
 
 
 def make_handler(

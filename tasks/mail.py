@@ -57,6 +57,7 @@ from client.exceptions import ApiError, CherrytaleError
 from client.game_client import GameClient
 from models.daily import GetObjClass
 from models.envelope import EnvelopeError, EnvelopeView
+from services import cancellation
 from models.mail import (
     MailGetListPacket,
     MailGetListRes,
@@ -249,10 +250,11 @@ class MailTask(BaseTask):
 
         with self._borrow(game) as client:
             for index, mail_id in enumerate(ids):
+                cancellation.raise_if_cancelled()
                 if index:
                     # 见 SINGLE_CLAIM_INTERVAL_SECONDS：宁可慢 1 秒，也别让 5 个包
-                    # 在同一毫秒里砸到网关上。
-                    time.sleep(SINGLE_CLAIM_INTERVAL_SECONDS)
+                    # 在同一毫秒里砸到网关上；使用可中断睡眠保证停止即时响应。
+                    cancellation.sleep_interruptible(SINGLE_CLAIM_INTERVAL_SECONDS)
                 try:
                     res = self._open_parcel(client, [mail_id])
                 except (CherrytaleError, EnvelopeError) as exc:
@@ -353,11 +355,11 @@ class MailTask(BaseTask):
                 # 空邮箱与"全是已读"要分开说：后者通常是**都领过了**，
                 # 报成"领取失败"会让用户以为工具坏了。
                 if res.mailList:
-                    message = (
-                        f"邮箱里没有未读邮件可领取（共 {len(res.mailList)} 封，"
-                        f"其中已读 {read_count} 封）—— 已读的通常是已经领过的，"
-                        "服务端会拒绝重复领取，属正常状态"
-                    )
+                    # ★ 2026-10-18：旧文案是"没有未读邮件（共 N 封，其中已读 N 封）
+                    # —— 已读的通常是已经领过的，服务端会拒绝重复领取，属正常状态"。
+                    # "共 N 封 / 已读 N 封"是恒等式，后面 30 字解释也是每天重复的
+                    # 噪音 —— 既然这个分支只在"未读为空"时进来，一句话就够。
+                    message = f"邮箱里没有未读邮件（共 {len(res.mailList)} 封，均已领过）"
                 else:
                     message = "邮箱里没有可领取的邮件"
                 return TaskResult(

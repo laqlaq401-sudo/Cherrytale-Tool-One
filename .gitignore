@@ -70,12 +70,16 @@ htmlcov/
 .activity_cache.json
 # 自动任务「每游戏日一次」记账
 .daily_auto_state.json
+# 宴席任务状态记账
+.banquet_state.json
 # 登录后自动签到记账（自然日 0 点，见 tasks/login_signin.py）
 .login_signin_state.json
 # 钻石总闸偏好
 .spend_state.json
 # 任务勾选/参数偏好
 .selection_state.json
+# 主动任务卡片的展开状态（界面偏好）
+.ui_prefs.json
 # 逆向常量（如 GAME_V_CODE_KEY）的本机存放点，绝不可入库
 config_local.py
 
@@ -117,3 +121,23 @@ android/app/src/main/python/
 # ---- 头像（运行时 CDN 落盘缓存 + 预提取静态目录，均可再生成）----
 avatars/
 web/assets/avatars/
+
+# ---- 热更情报雷达（2026-10-17 建）----
+# 整目录不入库：里面是「未实装内容」的解包产物与清单快照，
+# 体积会随每次热更增长（单次 CG/卡池图动辄几十 MB），且属于剧透性质资料，
+# 不适合进公开仓库。README 里记的是可行性判断与实测数字，需要时另行摘录。
+hotfix_radar/
+
+# ---- 天命对决 PVP 战斗逻辑分析（2026-10-18 建）----
+# 目录名按用户要求带 "(ingore)" 后缀；内容是逆向分析产物与导出数据，
+# 含大量原始报文/反汇编片段，体量大且非源码，整目录不入库。
+天命对决分析(ingore)/
+
+# ---- 抽卡概率与仓检暗改分析（2026-10-18 建）----
+# 目录名按用户要求为 "抽卡概率分析(ignore)"；含逆向产物、统计脚本与原始抓包/分析数据，整目录不入库。
+抽卡概率分析(ignore)/
+
+# ---- 本地分析产物（2026-10-19 起）----
+# outputs/ 放的是内部方案、验证报告与界面截图，属于本地工作产物，不进公开仓库。
+outputs/
+

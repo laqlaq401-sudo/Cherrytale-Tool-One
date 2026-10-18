@@ -87,9 +87,10 @@ class YimoStatusTask(BaseTask):
             return TaskResult(
                 task=self.name,
                 ok=True,
+                # ★ 2026-10-18：删掉文案里的内部文档路径（同 arena_status）。
                 message=(
                     f"失控炼成阵（只读）：{state.summary()}。"
-                    "本任务不进战、不购买次数 —— 战斗需要 token 签名，见 notes/battle_engine_project.md"
+                    "本任务只查状态，不进战、不购买次数"
                 ),
                 data={
                     "remain_count": state.remainCount,

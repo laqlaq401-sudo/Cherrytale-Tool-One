@@ -160,9 +160,16 @@ class YimoBoxTask(BaseTask):
 
                 new_claimed = claimed + len(claimable_ids)
                 all_claimed = new_claimed >= total_chests
+                # ★ 2026-10-18：右括号曾经只写在 else 分支里 —— 领满那一支
+                # 输出的是"…已全部领满！"（没有右括号）。现在统一由 tail 收尾。
+                tail = (
+                    "，已全部领满"
+                    if all_claimed
+                    else "，剩余宝箱将在后续轮询中继续检测"
+                )
                 msg = (
-                    f"成功领取失控炼成阵全服宝箱（本次领取 {len(claimable_ids)} 个，当前共已领 {new_claimed}/{total_chests} 个"
-                    + ("，已全部领满！" if all_claimed else "，剩余宝箱将在后续轮询中继续检测）")
+                    f"成功领取失控炼成阵全服宝箱（本次领取 {len(claimable_ids)} 个，"
+                    f"当前共已领 {new_claimed}/{total_chests} 个{tail}）"
                 )
                 return TaskResult(
                     task=self.name,

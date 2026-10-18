@@ -140,6 +140,39 @@ class TestCommands:
         assert "未发送" in out
         assert "application/octet-stream" in out
 
+    def test_run_request_marks_settle_login_signin(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """★ 2026-10-17（方向 A）：命令行运行会置位「登录签到」补触发。
+
+        只验证"请求怎么组装"——``prepare`` / ``run_tasks`` 都换成替身，
+        零网络；触发行为本身由 ``tests/test_runner_login_signin_settle.py`` 覆盖。
+        """
+        from services import runner as run_runner
+
+        captured: dict[str, object] = {}
+
+        class _Ctx:
+            def close(self) -> None:
+                return None
+
+        def fake_prepare(request: object, emit: object = None) -> _Ctx:
+            captured["request"] = request
+            return _Ctx()
+
+        def fake_run_tasks(context: object, request: object, **kwargs: object) -> object:
+            return run_runner.RunReport(
+                steps=[run_runner.StepResult(name="handshake", ok=True, message="ok")]
+            )
+
+        monkeypatch.setattr(run_runner, "prepare", fake_prepare)
+        monkeypatch.setattr(run_runner, "run_tasks", fake_run_tasks)
+
+        assert main.main(["run", "handshake"]) == 0
+        request = captured["request"]
+        assert isinstance(request, run_runner.RunRequest)
+        assert request.settle_login_signin is True
+
     def test_run_unknown_task_returns_2(self, capsys) -> None:
         """任务名写错时返回 ``2``（与"任务失败"的 ``1`` 区分开）。"""
         assert main.main(["run", "不存在的任务"]) == 2

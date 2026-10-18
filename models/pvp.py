@@ -84,12 +84,16 @@ class PVPHomeRes(ProtoMessage):
         return len(self.pvpList)
 
     def summary(self) -> str:
-        """一行摘要（日志用）。"""
+        """一行摘要（日志用）。
+
+        ★ 2026-10-18：``战力字段=`` 这种"字段"措辞是开发者视角，
+        改成"我的战力"；``已刷新`` 补上宾语（刷的是对手）。
+        """
         return (
-            f"可挑战次数={self.challengeCount}，已购买={self.buyedCount}，"
-            f"已刷新={self.reflashCount}，对手 {self.opponent_count()} 个，"
-            f"战力字段={self.myFighting}"
-            + (f"，公会={self.allianceName}" if self.allianceName else "")
+            f"可挑战 {self.challengeCount} 次（已购买 {self.buyedCount} 次、"
+            f"已刷新对手 {self.reflashCount} 次），"
+            f"对手 {self.opponent_count()} 个，我的战力 {self.myFighting}"
+            + (f"，公会 {self.allianceName}" if self.allianceName else "")
         )
 
 

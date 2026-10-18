@@ -323,12 +323,37 @@ FOCUS_CLASSES: Final[tuple[str, ...]] = (
     "WuDouHomeRes",
     "WuDouChallengeHome",
     "WuDouChallengeHomeRes",
+    "WuDouReplayPacket",
+    "WuDouReplayRes",
+    "WuDouRankPacket",
+    "WuDouRankRes",
+    "PVPListClass",
     # ③ 失控炼成阵（YimoBattleModule）：22101 空包 → 22102 带 remainCount(剩余次数)
     "GetYimoState",
     "GetYimoStateRes",
     "OpenYimoRewardPacket",
     "OpenYimoRewardRes",
     "YimoBossDailyRewardClass",
+    # ④ 战斗与遥测存证（竞技场 / 试炼 / 炼成阵 / 97025 异步存证）
+    "PVPVerifyPacket",
+    "PVPResultsClass",
+    "ChallengePacket",
+    "ChallengeRes",
+    "ChallengeResultPacket",
+    "ChallengeResultRes",
+    "ExperimentInfo",
+    "ExperimentInfoClass",
+    "ExperimentInfoRes",
+    "ExperimentTeamClass",
+    "ExperimentRoleClass",
+    "ExperimentFightingRequest",
+    "ExperimentFightingRequestRes",
+    "ExperimentFightingResult",
+    "ExperimentFightingResultRes",
+    "YimoBattleRequest",
+    "YimoBattleRequestRes",
+    "YimoBattleResult",
+    "YimoBattleResultRes",
     # ---- 只读「信息面板」：金币 / 钻石 / 体力（网页顶部的资源展示用）----
     # 2007 是**空包**（只请求一份背包快照）；2008 只有一个字段 ``itemList``，
     # 元素结构与 ``GetObjClass.itemList`` 同型 → Python 侧**复用**
@@ -437,6 +462,28 @@ FOCUS_CLASSES: Final[tuple[str, ...]] = (
     "GrandLineGetCountRewardPacket",
     "GrandLineGetCountRewardRes",
     "GrandLineCountRewardRes",
+    # ---- 每日任务自动执行：六个缺口动作（2026-10-16 接入，见 notes/daily_task_auto_plan.md）----
+    # 英雄升级 5003/5004、技能升级 4001/4002、装备强化 3003/3004 + 3005/3006、
+    # 英雄赠礼 5015/5016、好友赠礼 10009/10010 + 10001/10002、
+    # 契约拼图抽取 11029/11030（抽取本体复用 11009 SweepSectionPacket，已收录）。
+    "UpgradeSkillPacket",
+    "UpgradeSkillRes",
+    "UpRoleExpPacket",
+    "UpRoleExpRes",
+    "SkillClass",
+    "StrengthenEquipPacket",
+    "StrengthenEquipRes",
+    "GetAllEquipPacket",
+    "GetAllEquipRes",
+    "UsePresentPacket",
+    "UsePresentRes",
+    "FriendOperationPacket",
+    "FriendOperationRes",
+    "GetFriendListPacket",
+    "GetFriendListRes",
+    "GetSecretSectionPacket",
+    "GetSecretSectionRes",
+    "SecretSectionClass",
 )
 
 _SOURCE_LABEL: Final[str] = "Cherrytale IL2CPP/dump.cs"

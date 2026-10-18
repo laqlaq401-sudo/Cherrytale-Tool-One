@@ -27,7 +27,7 @@ import threading
 import time
 import uuid
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Final, Literal
 
 from services import banquet_state, cancellation, daily_state, runner, task_spec
@@ -297,7 +297,17 @@ class RunManager:
         以前"忙"= HTTP 409 + 前端弹窗。用户明确要求改成：**直接挂在后台排队**，
         按顺序全部跑完。互斥由"单 worker 线程 + 每批开跑前抢闸门"保证，
         与排队并不冲突（见 :attr:`_gate` 的说明）。
+
+        【★ 2026-10-17（方向 A）：排队批次 = "进游戏执行"】
+        每个排队批次都置位 ``settle_login_signin`` —— "当天第一次真正开始执行"
+        时由 ``runner`` 补发一次「登录签到（每日+活动）」33055（幂等、每自然日
+        每角色一次；演练与含 ``login`` 的批次在 runner 侧被短掉）。会话持久化的
+        日常不经过登录页，这里是登录侧钩子之外唯一的日常触发点
+        （见 ``notes/login_signin_run_trigger_plan.md``）。
         """
+        # ★ 2026-10-17（方向 A）：RunRequest 是 frozen dataclass，用 replace 置位。
+        request = replace(request, settle_login_signin=True)
+
         problems = runner.validate_request(request)
         if problems:
             raise InvalidRunError(problems)
@@ -395,9 +405,19 @@ class RunManager:
     # ------------------------------------------------------------------
     # ★ 中断（2026-10-04 新增）
     # ------------------------------------------------------------------
-    def stop(self, reason: str = cancellation.DEFAULT_REASON) -> dict[str, Any]:
+    def stop(
+        self,
+        reason: str = cancellation.DEFAULT_REASON,
+        *,
+        run_id: str | None = None,
+    ) -> dict[str, Any]:
         """中断**当前正在跑的那一批**（队列里剩下的照常跑）。
 
+        :param reason: 中断原因（进日志与界面提示）。
+        :param run_id: ★ 2026-10-16：**只撤指定的那一批**。
+            ``None``（默认）= 老行为（停"手上这一件"）。
+            给了值则精确制导：那一批在跑就中断它、还在排队就把它从队列里摘掉、
+            已经跑完就回一句"这一批已经结束了"。见 :meth:`_stop_specific`。
         :return: 给人看的结果 dict；``stopped=False`` 表示"现在没有可中断的运行"。
 
         【为什么不清空队列（用户 2026-10-04 选定）】
@@ -409,6 +429,9 @@ class RunManager:
         当前这批剩下的任务不会被执行了，把状态从 pending 改成 skipped，
         用户才能在进度里一眼看出"这几个是我自己停掉的"，而不是一直转圈。
         """
+        if run_id is not None:
+            return self._stop_specific(run_id, reason)
+
         token = cancellation.request_cancel(reason)
         if token is None:
             return {"stopped": False, "message": "当前没有正在运行的任务。"}
@@ -428,6 +451,62 @@ class RunManager:
             "stopped": True,
             "message": "已请求中断：正在跑的任务会在边界处停下，队列里的照常执行。",
             "skipped": skipped,
+            "queued_runs": self.queue_length,
+        }
+
+    def _stop_specific(self, run_id: str, reason: str) -> dict[str, Any]:
+        """**按 run_id 精确撤掉一批**（``stop(run_id=...)`` 的实现）。
+
+        【为什么要这个能力（2026-10-16 用户需求）】
+        "主动任务一键执行"把 6 个任务拼成**一次**提交，用户点「停止执行」时的
+        期望是"从我正在跑的这个开始，后面全都别跑了"。如果此时前面还有别人的
+        批次在跑，一键这批就只是**排队**状态 —— 老 ``stop()`` 会去停"正在跑的那
+        一批"（不是用户点的那件事），正好停错对象。所以这里按 run_id 认人。
+
+        【三种情形】
+        1. 就是当前正在跑的那批 → 交给普通 :meth:`stop`（协作式中断 + 标 skipped）；
+        2. 还在 ``_queue`` 里排队 → **直接摘掉**，并把它自己的步骤标成 skipped
+           后放进 ``_recent``：这样它会在进度里以"已撤销"的样子留痕，
+           而不是凭空消失（用户点了撤销却看不到任何变化，比不撤销更糟）；
+        3. 找不到（已跑完 / 本来就没人排队）→ ``stopped=False`` + 一句人话。
+
+        【为什么摘掉排队批次不需要动取消令牌】
+        取消令牌是**每批一个**、在 ``_execute_one`` 开跑时才安装的
+        （见那里的说明）。一批还没开跑 = 还没有属于它的令牌，
+        摘出队列就彻底不会被跑到了 —— 不需要（也不能）去"取消"它。
+        """
+        with self._lock:
+            is_current = bool(self._queue) and self._run_id == run_id
+            index = next(
+                (i for i, item in enumerate(self._queue) if item.run_id == run_id),
+                None,
+            )
+        if is_current:
+            return self.stop(reason)
+        if index is None:
+            return {"stopped": False, "message": "这一批已经结束了。"}
+
+        with self._lock:
+            item = self._queue.pop(index)
+            titles: list[str] = []
+            for step in item.steps:
+                if step.status in ("pending", "running"):
+                    step.status = "skipped"
+                    step.message = "已撤销（用户取消了这一批）"
+                titles.append(step.title or step.name)
+            # 与 worker 收尾同一套留痕方式（只留最近 10 批）
+            self._recent.append(item.steps)
+            del self._recent[:-10]
+
+        self._log(
+            f"⏹ 已撤销排队中的运行 {run_id}：{len(titles)} 个任务未执行"
+            f"（{reason}）"
+        )
+        return {
+            "stopped": True,
+            "cancelled_queued": True,
+            "skipped": titles,
+            "message": "已撤销排队中的这一批（它还没开始执行）。",
             "queued_runs": self.queue_length,
         }
 
@@ -459,6 +538,22 @@ class RunManager:
         problems = runner.validate_request(request)
         if problems:
             raise InvalidRunError(problems)
+
+        # ★ 2026-10-18：**让行** —— 队列里只要有批在排队/执行，只读查询一律不抢闸门。
+        #
+        # 【为什么不是"抢不到才 409"（旧行为）】
+        # 旧写法先 ``acquire(blocking=False)``。worker 被唤醒到真正抓到锁之间
+        # 有几十毫秒窗口，而启动页恰恰在这个窗口里发 ``/api/player?full=1``
+        # （6 个只读任务串行）：读抢在写前面占住闸门，自动任务只能等它全跑完 ——
+        # 用户看到的就是"已受理运行，但第一个任务迟迟不开始"（实测 10~30 秒）。
+        # 让行把这段竞态直接掐掉：队列非空 = 写优先，读连试都不试。
+        #
+        # 【对只读接口的影响】
+        # 运行期间它们会立刻拿到 409（旧行为是"大概率也 409，但可能抢赢"）。
+        # 前端按"运行结束后自动补读"处理（``app.js`` 的 boot / pollOnce）。
+        # 这里仍不写运行状态：它仍是"只读问答"，不是用户眼里的"一次运行"。
+        if self.is_running:
+            raise RunBusyError("任务正在执行，只读查询先让行（运行结束后会自动补读）")
 
         if not self._acquire_gate():
             raise RunBusyError("上一次运行还没有结束，请等它跑完（或稍后再试）")
@@ -702,7 +797,14 @@ class RunManager:
         # ★ 2026-10-06：任务结束同样打一次心跳（见 _on_step_start 的说明）
         _heartbeat(f"{_title_of(result.name)} 结束")
 
-        if not dry_run and task_spec.is_once_per_day(result.name):
+        # ★ 2026-10-16：**只有成功才记账**。
+        # 【为什么补上 result.ok】
+        # 旧写法不看结果，任务**失败也记一笔** —— 对自动任务表现为"今天不再重试"
+        # （还能靠卡片上的「执行」小按钮手动补），但对 2026-10-16 起借这套记账
+        # 实现"执行一次就置灰"的**手动任务**（``alliance_donate``）就是硬伤：
+        # 捐献失败（金币不足等）后卡片直接变灰，用户想重试都点不了。
+        # 失败不记账的语义更朴素：没成功 = 没做过 = 还能再试。
+        if not dry_run and result.ok and task_spec.is_once_per_day(result.name):
             try:
                 done = daily_state.mark_completed([result.name])
                 _LOGGER.info(

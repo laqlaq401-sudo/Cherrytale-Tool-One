@@ -99,10 +99,10 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Final, Literal
+from typing import Any, Final, Literal
 
 import config
 from client.exceptions import SpendBlockedError
@@ -116,7 +116,7 @@ from models.bbq import (
     GetBBQDataPacket,
     GetBBQDataRes,
 )
-from models.daily_reset import in_banquet_gap
+from models.daily_reset import in_banquet_gap, next_banquet_gap_boundary
 from models.activity_stage import DISPLAY_TZ
 from models.game_config import ExtraEnergyTier, load_extra_energy_tiers
 from services import banquet_state
@@ -715,10 +715,9 @@ class BBQEnergyTask(BaseTask):
             return TaskResult(
                 task=self.name,
                 ok=True,
-                message=(
-                    f"{label}本宴席日已吃过，跳过重复发送"
-                    f"（记账：{', '.join(done)}）。"
-                ),
+                # ★ 2026-10-18：不再把内部记账键念给用户听
+                # （旧文案是 "…跳过重复发送（记账：早宴席, 晚宴席）。"）。
+                message=f"{label}本宴席日已吃过，跳过重复发送。",
                 data={
                     "mode": "meal_already_done",
                     "meal": meal,
@@ -876,7 +875,6 @@ class BBQEnergyTask(BaseTask):
             ok=True,
             message=(
                 f"{label}已花 {plan.amount} 钻邀请 {len(plan.friend_ids)} 位好友：{text}"
-                f"（记账：{', '.join(recorded)}）"
             ),
             data={
                 "mode": "meal_invite",
@@ -928,10 +926,7 @@ class BBQEnergyTask(BaseTask):
         return TaskResult(
             task=self.name,
             ok=True,
-            message=(
-                f"{label}免费档吃宴席成功{note}：{text}"
-                f"（记账：{', '.join(recorded)}）"
-            ),
+            message=f"{label}免费档吃宴席成功{note}：{text}",
             data=dict(result_data, meals_done=list(recorded)),
         )
 
@@ -985,9 +980,12 @@ class BBQEnergyTask(BaseTask):
         """
         now_ms = int(time.time() * 1000)
         gap = in_banquet_gap(self._banquet_now())
+        # 每顿的期只解析一次，供下面两处共用（判定 + 算 expires_at）。
+        intervals = {meal: self._meal_interval(data, meal) for meal in MEALS}
+        expires_at_ms = self._expires_at_ms(intervals, now_ms)
         view: list[dict[str, object]] = []
         for meal in MEALS:
-            interval = self._meal_interval(data, meal)
+            interval = intervals[meal]
             if interval is None:
                 view.append(
                     {
@@ -1002,6 +1000,7 @@ class BBQEnergyTask(BaseTask):
                         "window_text": "服务端未下发该时段",
                         "start_text": "",
                         "end_text": "",
+                        "expires_at": expires_at_ms,
                     }
                 )
                 continue
@@ -1043,9 +1042,53 @@ class BBQEnergyTask(BaseTask):
                     ),
                     "start_text": _ms_to_clock(interval.startDateTime),
                     "end_text": _ms_to_clock(interval.endDateTime),
+                    # ★ 2026-10-16：这份"两顿状态"的**缓存失效时刻**（毫秒）。
+                    # 前端据它决定"还能不能拿这份数据判断能否吃"，跨过就重发
+                    # 32007/32008。详见 :meth:`_expires_at_ms`。
+                    "expires_at": expires_at_ms,
                 }
             )
         return view
+
+    def _expires_at_ms(
+        self, intervals: Mapping[str, Any], now_ms: int
+    ) -> int:
+        """这份"两顿状态"最早会在**哪个时刻**失效（毫秒时间戳）。
+
+        :param intervals: ``{meal: ActivityIntervalDataClass | None}``。
+        :param now_ms: 当前时刻（毫秒，与 :func:`_meals_view` 用同一个）。
+
+        【为什么前端需要这个字段（★ 2026-10-16 用户需求）】
+        用户的原话是"宴席的时间不需要每一次都手动刷新，只需要在登录工具的
+        时候根据正确的时间直接划分可执行情况"。而**窗口起止时刻只存在于
+        32008 响应里**（本地无从推算：期号 ``groupID`` 也是服务端给的，
+        见 ``notes/bbq_second_meal_plan.md``），所以"登录时算一次"只能是
+        "拉一次然后缓存"。既然要缓存，就必须知道**什么时候这份缓存不再可信**
+        —— 否则会拿过期窗口去回答"现在能不能吃"。
+
+        【会让结论改变的时刻只有两类】
+        ① 服务端下发的窗口起止（``startDateTime`` / ``endDateTime``）——
+           跨过它，``window_state`` 就变了；
+        ② 空档期的两个端点（06:00 / 06:10，本机时钟）—— 跨过它，
+           两顿都会变成/不再是"休整中"（见 :func:`in_banquet_gap`）。
+        取**严格大于 ``now_ms``** 的最小值。空档边界由
+        :func:`models.daily_reset.next_banquet_gap_boundary` 保证在未来，
+        所以这里恒有结果（服务端数据全是过去时刻也不会算出空值）。
+
+        【为什么两顿共用同一个值】
+        前端本来就是取两顿 ``expires_at`` 的最小值当作整份缓存的有效期；
+        给成同一个值只是把那个 ``min`` 提前算完了，少一处可能漏算的地方。
+        """
+        candidates = [
+            int(next_banquet_gap_boundary(self._banquet_now()).timestamp() * 1000)
+        ]
+        for interval in intervals.values():
+            if interval is None:
+                continue
+            for moment in (interval.startDateTime, interval.endDateTime):
+                if int(moment) > now_ms:
+                    candidates.append(int(moment))
+        return min(candidates)
 
     def _read_only_result(self, data: GetBBQDataRes) -> TaskResult:
         """只读分支：把"如果吃会怎样"完整摆在用户面前，但不发任何动作请求。"""
@@ -1054,8 +1097,7 @@ class BBQEnergyTask(BaseTask):
         plan = self._plan_invite(data)
         group_id = self._current_group_id(data)
         message = (
-            f"只读完成（未发送 15003）：本期 groupID={group_id}；"
-            f"可邀请好友 {len(data.friend_ids())} 人；"
+            f"只读完成：本期可邀请好友 {len(data.friend_ids())} 人；"
             f"档位（仅用于估算费用）"
             f"{'；'.join(tier_lines) if tier_lines else '（读不到配置表）'}"
         )

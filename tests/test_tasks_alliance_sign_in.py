@@ -245,7 +245,7 @@ class TestSignInFlow:
         ]
         assert result.ok is True
         assert "连线奖励暂无可领" in result.message
-        assert "32" in (result.data["bingo_reward"] or "")
+        assert "还没连成线" in (result.data["bingo_reward"] or "")
 
 
     def test_server_rejection_is_fail(self, monkeypatch: pytest.MonkeyPatch) -> None:

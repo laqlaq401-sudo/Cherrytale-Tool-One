@@ -56,6 +56,7 @@ ALLOWED_PACKET_NAMES: Final[tuple[str, ...]] = (
     "FightingRequestPacket",
     "FightingResultPacket",
     "ReceiveStarRewardPacket",
+    "PVPVerifyPacket",
 )
 
 #: ``{类名: 消息号}``（供 tasks/packet_guard.guarded_send 使用）
@@ -83,6 +84,7 @@ PACKET_PURPOSE: Final[dict[int, str]] = {
     11015: "向服务端申请进入主线关卡战斗（获得 fightToken）",
     11017: "向服务端上报战斗胜利与三星结果（消耗体力，完成关卡）",
     11007: "领取小章节满星宝箱奖励",
+    97025: "战斗结束后异步上报存证与遥测审计包（镜像真机生命周期）",
 }
 
 #: 主线/常规 PVE 出战队伍编号（对应客户端底层 TeamType.PVE1 = 40）
@@ -178,6 +180,44 @@ class BattleAchiAwakeClass(ProtoMessage):
 
     totalInterupCount: int = 0
     actorCount: list[bytes] = Field(default_factory=list)
+
+
+class WuDouResultRecord(ProtoMessage):
+    """单英雄战斗数据存证明细（嵌套在 BattleResultClass.myTeamRecord / enemyTeamRecord 内）。
+
+    【业务与逆向依据】
+    对应 IL2CPP dump.cs 中 TypeDefIndex: 9135 的 WuDouResultRecord 类。
+    与 models/proto_fields.py 声明顺序 1..13 逐字段对齐：
+    1: role_sid       - 英雄卡牌实例 SID（敌方为 -1）
+    2: roleMainId     - 英雄原型配置 ID（如 130008002）
+    3: lv             - 英雄等级
+    4: dps            - 输出总伤害
+    5: tank           - 承受总伤害
+    6: heal           - 治疗总量
+    7: hit            - 命中/有效攻击次数
+    8: beHit          - 被击次数
+    9: shield         - 护盾量
+    10: power         - 单角色战力
+    11: topDps        - 单次最高暴击伤害
+    12: lowDtps       - 最低承受伤害/状态
+    13: roleStarLv    - 角色星级
+    """
+
+    proto_class_name = "WuDouResultRecord"
+
+    role_sid: int = 0
+    roleMainId: int = 0
+    lv: int = 1
+    dps: int = 0
+    tank: int = 0
+    heal: int = 0
+    hit: int = 0
+    beHit: int = 0
+    shield: int = 0
+    power: int = 0
+    topDps: int = 0
+    lowDtps: int = 0
+    roleStarLv: int = 1
 
 
 class BattleResultClass(ProtoMessage):
@@ -297,3 +337,24 @@ class ReceiveStarRewardRes(ProtoMessage):
 
     def is_success(self) -> bool:
         return self.errorCode == 0
+
+
+class PVPVerifyPacket(ProtoMessage):
+    """97025 战斗结束后异步上报存证与遥测审计包。
+
+    来源：GameAssembly.dll Dump / dump.cs TypeDefIndex: 8961 (PVPVerifyPacket)
+    """
+
+    proto_class_name = "PVPVerifyPacket"
+
+    battleToken: int = 0
+    reportSid: int = -1
+    winOrLose: int = 1
+    atkTeamPlayId: int = -1
+    defTeamPlayId: int = -1
+    battleType: int = 10
+    message: str = ""
+    sectionID: int = 0
+    fightRecord: str = ""
+    fightData: str = ""
+

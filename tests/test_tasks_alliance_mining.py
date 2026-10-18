@@ -975,8 +975,12 @@ class TestTeamMining:
 
         assert PACKET_SET_ROLE not in sent_packet_ids(recorded)
         assert result.ok is True  # 没发包也就没有失败
-        assert "最高只有 10 级" in result.message, "必须指出是等级不足，而不是含糊的'没有匹配'"
+        # 运行视图只留分类计数（2026-10-18：明细不再进 message）
+        assert "等级不足 ×1" in result.message, "必须指出是等级不足，而不是含糊的'没有匹配'"
         assert "名册里没有这个角色" not in result.message, "角色是有的，别误报成没有"
+        # 具体差几级在结构化明细里（进开发者日志，供排障）
+        detail = result.data["unfillable"][0]
+        assert "最高只有 10 级" in detail
 
     def test_unowned_role_is_reported_as_missing(
         self, monkeypatch: pytest.MonkeyPatch
@@ -1545,10 +1549,12 @@ class TestTeamMining:
     def test_unfillable_summary_is_aggregated_not_dumped(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """33 条明细不该把运行视图刷成 60 行 —— 汇总按原因聚合、明细封顶。
+        """汇总只报"跳过 N 个候选槽位 + 原因计数"，明细一条都不进运行视图。
 
         【真机教训】2026-10-05 那次运行视图有 33 条 unfillable + 15 条失败，
-        人根本读不了。聚合后一眼能看出"卡在哪一类"。
+        人根本读不了；2026-10-18 用户又指出"无法占坑 5 个"会被读成"占了 5 个坑失败"
+        —— 单位其实是候选槽位，与"占坑 N 次"并列会被误读成超了每日次数。
+        现在明细全部进 ``logger.info``，运行视图只留聚合。
         """
         slots = [
             slot_bytes(ROLE_INFO_ZHANGCHEN, 1, EMPTY_MEMBER_PID) for _ in range(6)
@@ -1560,10 +1566,14 @@ class TestTeamMining:
         task = create_task("alliance_mining_team", make_session())
         result = task.run()
 
-        assert "无法占坑 6 个" in result.message
+        assert "跳过 6 个候选槽位" in result.message
         assert "名册里没有这个角色 ×6" in result.message, "要按原因聚合计数"
-        assert "另 3 个见开发者日志" in result.message, "明细要封顶（最多列 3 条）"
+        # ★ 2026-10-18：运行视图不再出现「矿点 / 槽位 / 另 N 个见开发者日志」
+        assert "矿点" not in result.message
+        assert "见开发者日志" not in result.message
         assert result.ok is True
+        # 结构化明细仍然完整（供 /api/status 与排障消费）
+        assert len(result.data["unfillable"]) == 6
         assert PACKET_SET_ROLE not in sent_packet_ids(recorded)
 
     def test_full_pit_is_ignored(self, monkeypatch: pytest.MonkeyPatch) -> None:

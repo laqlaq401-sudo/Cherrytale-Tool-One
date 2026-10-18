@@ -293,6 +293,65 @@ class TestRunIfFirstLoginToday:
         assert sent_packet_ids(recorded) == [PACKET_LOGIN_REWARDS]
         assert read_targets(state_file)["s=1|p=1"]["date"] == "2026-10-06"
 
+    def test_emit_receives_success_line(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """★ 2026-10-17：成功时把 ✔ 行交给旁路出口（运行侧触发的可见性）。"""
+        state_file = tmp_path / "signin.json"
+        patch_transport(monkeypatch)
+        lines: list[str] = []
+        run_if_first_login_today(
+            make_state(), now=DAY_ONE, path=state_file, emit=lines.append
+        )
+        assert len(lines) == 1
+        assert lines[0].startswith(f"{TITLE} ✔ ")
+        assert "高級寶石袋×2" in lines[0]
+
+    def test_emit_receives_failure_line(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """★ 2026-10-17：失败时把 ✘ 行交给旁路出口（"不上抛"契约不变）。"""
+        state_file = tmp_path / "signin.json"
+
+        def broken_post_raw(self: GameClient, body: bytes) -> FakeResponse:
+            raise NetworkError("测试替身：网络断了")
+
+        monkeypatch.setattr(GameClient, "post_raw", broken_post_raw)
+        lines: list[str] = []
+        run_if_first_login_today(
+            make_state(), now=DAY_ONE, path=state_file, emit=lines.append
+        )
+        assert len(lines) == 1
+        assert "✘" in lines[0] and "测试替身：网络断了" in lines[0]
+
+    def test_emit_not_called_on_skip(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """★ 2026-10-17：跳过（今天已发过）保持静默 —— 不刷屏。"""
+        state_file = tmp_path / "signin.json"
+        patch_transport(monkeypatch)
+        run_if_first_login_today(make_state(), now=DAY_ONE, path=state_file)
+        lines: list[str] = []
+        run_if_first_login_today(
+            make_state(), now=DAY_ONE, path=state_file, emit=lines.append
+        )
+        assert lines == []
+
+    def test_emit_callback_error_is_swallowed(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """★ 2026-10-17：出口自己抛错也不许破坏"绝不抛异常"契约，主流程照常记账。"""
+        state_file = tmp_path / "signin.json"
+        patch_transport(monkeypatch)
+
+        def boom(text: str) -> None:
+            raise ValueError("出口炸了")
+
+        run_if_first_login_today(
+            make_state(), now=DAY_ONE, path=state_file, emit=boom
+        )  # 不抛 = 契约成立
+        assert read_targets(state_file)["s=1|p=1"]["date"] == "2026-10-06"
+
 
 # ---------------------------------------------------------------------------
 # 发包闸门

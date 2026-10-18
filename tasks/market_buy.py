@@ -46,9 +46,11 @@ itemID                          道具                  用途
 from __future__ import annotations
 
 import logging
+import random
 from typing import Any, Final
 
 from client.game_client import GameClient
+from services import cancellation
 from client.session import GameSession
 from models.envelope import EnvelopeView
 from models.game_packet import ProtoMessage
@@ -233,13 +235,16 @@ class MarketBuyTask(BaseTask):
 
         res = self.fetch_store(game)
         if not res.is_success():
+            # ★ 2026-10-18：用户可见文案不再带 `storeType`（内部请求参数），
+            # 两个括号也合并成一句；排查所需的铺子号只进开发者日志与 data。
             msg = (
                 f"拉取「{MARKET_STORE_NAME}」货架失败："
-                f"storeType={MARKET_STORE_TYPE}，"
-                f"errorCode={res.errorCode}（{res.describe_error()}）"
-                f"（未发送任何购买请求）"
+                f"{res.describe_error()}（errorCode={res.errorCode}），"
+                "未发送任何购买请求"
             )
-            self.logger.error("%s", msg)
+            self.logger.error(
+                "%s（排查信息：storeType=%d）", msg, MARKET_STORE_TYPE
+            )
             return TaskResult(
                 task=self.name,
                 ok=False,
@@ -347,6 +352,9 @@ class MarketBuyTask(BaseTask):
         errors: list[str] = []
 
         for index, (product, count) in enumerate(plan, start=1):
+            cancellation.raise_if_cancelled()
+            if index > 1:
+                cancellation.sleep_interruptible(random.uniform(0.3, 0.5))
             # ★ 2026-10-04 口径修正：原来这里印的是
             # ``%s（productSID）×%d，单价 %d（货币 currencyType）`` ——
             # 两个问题：① productSID 是**商品编号**，不是名称；
@@ -417,7 +425,12 @@ class MarketBuyTask(BaseTask):
             )
 
         names = "、".join(str(item["name"]) for item in purchased)
-        msg = f"已买满 {len(purchased)} 种道具（{names}），预计消耗金币约 {estimated_cost}"
+        # ★ 2026-10-18：已经买完了，不能说"预计消耗" ——
+        # 14004 的 costList 口径未实证，所以报"按标价合计"这个能自证的口径。
+        msg = (
+            f"已买满 {len(purchased)} 种道具（{names}），"
+            f"按标价合计约 {estimated_cost} 金币"
+        )
         self.logger.info("%s", msg)
         return TaskResult(
             task=self.name,

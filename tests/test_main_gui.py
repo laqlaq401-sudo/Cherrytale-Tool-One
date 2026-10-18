@@ -485,5 +485,24 @@ class TestClrRuntime:
         assert main_gui._systemevents_path(r"C:\somewhere\Other.dll") is None
 
 
+class TestWaitBrowserOrStopped:
+    def test_exits_immediately_when_proc_exited(self) -> None:
+        class DummyProc:
+            def poll(self):
+                return 0
+
+        class DummyServer:
+            is_alive = True
+
+        # proc.poll() 返回 0，循环应立即终止并不阻塞
+        main_gui.wait_browser_or_stopped(DummyProc(), DummyServer())
+
+    def test_delegates_to_wait_until_stopped_when_proc_is_none(self, monkeypatch) -> None:
+        called = []
+        monkeypatch.setattr(main_gui, "wait_until_stopped", lambda server: called.append(True))
+        main_gui.wait_browser_or_stopped(None, object())
+        assert called == [True]
+
+
 if __name__ == "__main__":  # 支持 `python -m tests.test_main_gui`
     raise SystemExit(pytest.main([__file__, "-v", "--no-header"]))

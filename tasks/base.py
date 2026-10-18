@@ -27,6 +27,7 @@ from client.exceptions import AuthenticationError, CherrytaleError, SpendBlocked
 from client.game_client import GameClient
 from client.session import GameSession
 from client.spending import SpendKind, SpendPolicy, SpendPurpose
+from services import progress as progress_channel
 
 # ---------------------------------------------------------------------------
 # 奖励 / 数量的呈现层（实现在 models/reward.py，这里只做再导出）
@@ -89,17 +90,23 @@ class RunOptions:
     "这个任务声明了 :attr:`BaseTask.accepts_run_options` 吗"，然后传一次。
 
     【默认值为什么全是"什么都不做"】
-    ``battles=0`` = 只读。竞技类请求一发出就消耗玩家真实次数，
-    所以"没配置"绝不能等于"随便打"（fail-closed 的同一套哲学，见
-    ``client/spending.py`` 的钻石闸门）。
+    ``battles=0`` 现在表示"打到没次数为止"（四个战斗任务统一口径，2026-10-18
+    用户要求），**不再**等于"一场都不打"。因此本对象不再替调用方做
+    "0 就是只读"的业务判断 —— 想"只看不打"请用对应的只读任务
+    （``arena_status`` / ``wudou_status`` / ``yimo_status`` / ``top_pvp_status``），
+    它们的白名单里连挑战包都没有，结构上打不出去。
+    :attr:`is_read_only` 保留为"``effective_battles == 0``"的纯算术判定，
+    只服务于还需要"0 场 = 什么都不做"的调用方（例如演练输出）。
+    竞技类请求一发出就消耗玩家真实次数，所以"没配置"仍**绝不能**变成"随便打"：
+    常量默认值全是 0，真正开打靠用户显式给场数或走后端确认过的路径。
 
-    :param battles: 用户想打几场（0 = 只读，不发任何消耗次数的请求）。
+    :param battles: 用户想打几场（0 / 负数 = 打到次数用完；-1 = 打完全部剩余次数）。
     :param max_battles: 硬上限（0 = 不额外限制）。与 ``battles`` 是**两道独立防线**：
         ``battles`` 防程序乱跑，``max_battles`` 防人手动输入时多打一个 0。
     :param interval_seconds: 每场之间的间隔秒数（0 = 不等待）。
     """
 
-    #: 用户想打几场（0 = 只读）
+    #: 用户想打几场（0 / 负数 = 打到次数用完；-1 = 打完所有剩余次数）
     battles: int = 0
     #: 硬上限（0 = 不额外限制）
     max_battles: int = 0
@@ -107,8 +114,22 @@ class RunOptions:
     interval_seconds: float = 0.0
 
     @property
+    def is_all_available(self) -> bool:
+        """是否要求「打完全部剩余可用次数」（-1）。"""
+        return self.battles == -1
+
+    @property
     def is_read_only(self) -> bool:
-        """本次是否**只读**（一场都不打）。"""
+        """``effective_battles == 0``（**纯算术判定，不再是业务承诺**）。
+
+        【★ 2026-10-18 语义变更】
+        以前它等价于"这个任务不会打"，因为 0 场 = 只读。现在四个战斗任务都把
+        0 解释成"打到次数用完"，任务内部早已不看这个属性（``top_pvp`` 直接按
+        ``battles <= 0`` 走"打完为止"）。保留它只是为了不打断既有调用方，
+        **不要**再用它判断"会不会发包"——要判断就去问具体任务的参数语义。
+        """
+        if self.is_all_available:
+            return False
         return self.effective_battles == 0
 
     @property
@@ -119,18 +140,24 @@ class RunOptions:
         两个地方各写一遍 ``min(...)``，早晚有一处写成 ``max(...)`` 或忘了裁剪；
         放在对象上之后，"要打几场"全项目只有一个答案。
         """
+        if self.is_all_available:
+            return -1
         if self.max_battles <= 0:
             return max(self.battles, 0)
         return max(min(self.battles, self.max_battles), 0)
 
     def was_capped(self) -> bool:
         """用户给的场数是否被硬上限裁剪过（用于提示"为什么没打完"）。"""
+        if self.is_all_available:
+            return False
         return self.battles > self.effective_battles
 
     def describe(self) -> str:
         """一行摘要（启动日志与演练输出用）。"""
+        if self.is_all_available:
+            return f"计划打完所有剩余次数（间隔 {self.interval_seconds:g}s）"
         if self.is_read_only:
-            return "只读模式（battles=0）：不会发送任何消耗次数的请求"
+            return "battles=0：各战斗任务按「打到次数用完」处理（不适用只读）"
         text = f"计划打 {self.effective_battles} 场（间隔 {self.interval_seconds:g}s）"
         if self.was_capped():
             text += f"；注意：你要求 {self.battles} 场，已被硬上限 {self.max_battles} 场裁剪"
@@ -243,6 +270,26 @@ class BaseTask(ABC):
         """一句话描述本任务（用于 ``--list`` 之类的展示）。"""
         doc = (type(self).__doc__ or "").strip().splitlines()
         return doc[0] if doc else f"任务 {self.name}"
+
+    def progress(self, message: str, *args: Any) -> None:
+        """记一条**逐场 / 逐关**的进度行（★ 2026-10-18 用户需求）。
+
+        :param message: 支持 ``%`` 占位符的文案（用法与 ``self.logger.info`` 相同）。
+        :param args: 占位符实参。
+
+        【它和 ``self.logger.info`` 的区别（唯一区别）】
+        ``info`` 只进开发者日志；本方法用的是 ``PROGRESS`` 级别
+        （见 ``services/progress.py``），网页会把它**实时**渲染进「运行结果」——
+        用户要的就是"打完一场就输出一场，最后再总结"。所以：
+
+        - 逐场 / 逐关的**结果行**（第 N 场胜负、第 N 关通关）用本方法；
+        - 准备动作、状态查询、等待提示仍然用 ``logger.info``
+          （它们是过程噪声，不该刷满运行结果）。
+
+        任务结束时的**总结**不必自己写：``services/runner.py`` 会把
+        :class:`TaskResult` 变成一行 ✔/✘ 结果行，那才是收尾。
+        """
+        progress_channel.report(self.logger, message, *args)
 
     def check_preconditions(self) -> None:
         """执行前的检查：先看登录态，再过**消费闸门**。

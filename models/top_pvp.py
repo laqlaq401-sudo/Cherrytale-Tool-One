@@ -188,10 +188,12 @@ class GetTopPvpHomeRes(ProtoMessage):
             if mine is not None
             else "榜单里没有我的记录（可能尚未参战）"
         )
+        # ★ 2026-10-18：``rewardCount`` 的语义至今未实证，**不再进用户文案** ——
+        # 旧文案把 "字段语义待确认，仅原样展示" 连同英文字段名直接给了用户，
+        # 既读不懂、又像是工具没做完。
         return (
-            f"{rank_text}；已购次数={self.buyChallengeCount}，"
-            f"rewardCount={self.rewardCount}（字段语义待确认，仅原样展示），"
-            f"跳过战斗演出={'已开启' if self.isSkipBattle else '已关闭'}"
+            f"{rank_text}；今日已购 {self.buyChallengeCount} 次；"
+            f"跳过战斗演出：{'已开启' if self.isSkipBattle else '已关闭'}"
         )
 
 
@@ -407,11 +409,16 @@ class TopPvpChallengeRes(ProtoMessage):
         battle = self.battle_summary()
         outcome = battle.get("winOrFail")
         outcome_text = "胜" if outcome is True else "负" if outcome is False else "未知"
-        return (
-            f"errorCode={self.errorCode}（{describe_error_code(self.errorCode)}）"
-            f"，本场={outcome_text}，积分变化={self.point_change():+d}"
-            f"，step={battle.get('step', '-')}，elapsed={battle.get('elapsed', '-')}"
-        )
+        # ★ 2026-10-18：逐场行只留用户看得懂的两件事（胜负、积分）。
+        # 旧文案是 ``errorCode=0（成功），本场=胜，积分变化=+15，step=2，elapsed=3.2``
+        # —— ``step`` / ``elapsed`` / 成功时的 ``errorCode`` 都是内部字段，
+        # 每个用户每天都要看一遍，纯噪音；失败时才报错误码。
+        if self.errorCode != 0:
+            return (
+                f"本场未结算（errorCode={self.errorCode}："
+                f"{describe_error_code(self.errorCode)}）"
+            )
+        return f"本场{outcome_text}，积分 {self.point_change():+d}"
 
 
 class ReceiveTopPvpRewardPacket(ProtoMessage):

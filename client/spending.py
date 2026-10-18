@@ -86,6 +86,12 @@ class SpendPurpose(IntEnum):
     BBQ_INVITE = 0
     #: 购买体力：花钻石购买体力（消息号 24005 BuyEnergyPacket）
     BUY_ENERGY = 1
+    #: 购买竞技场挑战次数：花钻石购买天梯竞技场门票（消息号 26015 BuyChallengePacket）
+    BUY_ARENA_TICKET = 2
+    #: 购买天命对决挑战次数：花钻石购买天命对决门票（消息号 26047 WuDouBuyChallenge）
+    BUY_WUDOU_TICKET = 3
+    #: 购买荣耀之巅挑战次数：花钻石购买荣耀之巅门票（消息号 39005 TopPvpBuyChallengeCountPacket）
+    BUY_TOP_PVP_TICKET = 4
 
 
 #: 用途 → "怎么打开这个开关"的提示（写进异常信息，省得用户去翻代码）。
@@ -100,6 +106,15 @@ _PURPOSE_HINTS: Final[dict[SpendPurpose, str]] = {
     SpendPurpose.BUY_ENERGY: (
         f"命令行：--buy-energy；环境变量：{config.BUY_ENERGY_ENV_NAME}=1；"
         "本地配置：config_local.py 里 BUY_ENERGY = True"
+    ),
+    SpendPurpose.BUY_ARENA_TICKET: (
+        "需在命令行传入 --times ≥ 1 且开启 --allow-diamond，或在网页「钻石使用」中确认执行"
+    ),
+    SpendPurpose.BUY_WUDOU_TICKET: (
+        "需在命令行传入 --times ≥ 1 且开启 --allow-diamond，或在网页「钻石使用」中确认执行"
+    ),
+    SpendPurpose.BUY_TOP_PVP_TICKET: (
+        "需在命令行传入 --times ≥ 1 且开启 --allow-diamond，或在网页「钻石使用」中确认执行"
     ),
 }
 

@@ -141,7 +141,9 @@ class AllianceSignInTask(BaseTask):
             # ★ 2026-10-04 真机实测：签到成功但服务端回 -32 —— 当天没有可领的
             # 连线（还没连成线，或该线的奖励已领过）。这不是失败：签到已生效，
             # 奖励本来就不存在，按"跳过"处理，不算进失败。
-            return True, "连线奖励暂无可领（errorCode=-32：尚未连成线或已领过）"
+            # ★ 2026-10-18：错误码只留给日志与 data，用户文案说人话
+            # （旧文案是"…（errorCode=-32：尚未连成线或已领过）"）。
+            return True, "连线奖励暂无可领（今天还没连成线，或已经领过）"
         if not res.is_success():
             return False, f"errorCode={res.errorCode}（{error_code_name(res.errorCode)}）"
         # 21062 的数量口径尚未实证 → 保守口径只报件数

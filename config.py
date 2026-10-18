@@ -554,13 +554,18 @@ BUY_ENERGY_TIMES_ENV_NAME: Final[str] = "CHERRYTALE_BUY_ENERGY_TIMES"
 
 
 def _resolve_buy_energy_times() -> int:
+    """默认购买体力次数：**至少 1**（★ 2026-10-18 起 0 不再是"只读查询"）。
+
+    这里的上限不做限制（每日 15 次由任务自己按已购次数截断）；下限必须 ≥1，
+    否则"默认值"会是一个任务层直接拒绝的值。
+    """
     val = _optional_int_env(BUY_ENERGY_TIMES_ENV_NAME)
     if val is not None:
-        return max(0, val)
-    return max(0, _read_int_from_local_config("BUY_ENERGY_TIMES", default=0))
+        return max(1, val)
+    return max(1, _read_int_from_local_config("BUY_ENERGY_TIMES", default=1))
 
 
-#: 默认购买体力次数（默认 0 = 只读查询）
+#: 默认购买体力次数（默认 1；★ 0 已不再表示只读查询）
 BUY_ENERGY_TIMES: Final[int] = _resolve_buy_energy_times()
 
 #: 购买体力钻石上限的环境变量名
@@ -658,20 +663,26 @@ PLATFORM_LOGIN_PASSWORD_ENV_NAME: Final[str] = "CHERRYTALE_LOGIN_PASSWORD"
 # ---------------------------------------------------------------------------
 #: 「这场要打几场」的环境变量名。
 #:
-#: 【默认 0 = 只读，这是刻意的、也是最重要的一条】
-#: 竞技类请求（39007 挑战 …）**一发出就扣次数**，而次数是玩家的真实资源。
-#: 所以默认值必须是"一次都不打"：不加参数运行任务时只拉取并展示状态；
-#: 想真打，必须用户**显式**用 ``--battles N``（或本环境变量）说出来。
+#: 【★ 2026-10-18：默认 0 的语义改成"打到次数用完"】
+#: 以前 0 = 只读（"一次都不打"）。现在与天梯竞技场 / 天命对决 / 失控炼成阵
+#: 统一：0 或负数 = **打到服务端返回"次数不足"为止**；正数 = 只打这么多场。
+#: "只看不打"不再是本任务的模式 —— 那是只读任务 ``top_pvp_status`` 的事
+#: （它只发 39001，结构上打不了一场）。
+#:
+#: ⚠️ 仍然保留"防手误"那道硬上限，见 :data:`TOP_PVP_MAX_BATTLES`。
 TOP_PVP_BATTLES_ENV_NAME: Final[str] = "CHERRYTALE_TOP_PVP_BATTLES"
 
-#: 默认场数（0 = 只读）
+#: 默认场数（0 = 打到次数用完；正数 = 指定场数）
 TOP_PVP_BATTLES: Final[int] = int(os.getenv(TOP_PVP_BATTLES_ENV_NAME, "0") or "0")
 
-#: 单次运行的**硬上限**（即使命令行写 ``--battles 999`` 也不会超过它）。
+#: **显式给正数时**的单次运行硬上限（``--battles 999`` 也不会超过它）。
 #:
-#: 【为什么在"用户给的场数"之外还要一道上限】
-#: 命令行参数表达的是"人的意图"，而人会手误（多打一个 0 → 20 场变 200 场）。
-#: 两道防线管的是两件不同的事：这一道防手误，用户那道防程序自己乱跑。
+#: 【为什么"打到次数用完"模式不受它限制（★ 2026-10-18）】
+#: 那道模式只信服务端的 ``-1`` —— 用户明确要求"只信服务端"。
+#: 本上限因此只挡"人手动输入正数时多打一个 0"这类手误，
+#: 防死循环另有 ``tasks/top_pvp.py::SAFETY_MAX_BATTLES``。
+#:
+#: 两道防线管的是两件不同的事：这一道防手误，那道防协议异常导致的无限循环。
 TOP_PVP_MAX_BATTLES_ENV_NAME: Final[str] = "CHERRYTALE_TOP_PVP_MAX_BATTLES"
 
 #: 硬上限的默认值（按每日免费次数（``eOtherSettings.TopPvp_FreeChallengeTimes = 395``）
@@ -682,15 +693,25 @@ TOP_PVP_MAX_BATTLES: Final[int] = int(os.getenv(TOP_PVP_MAX_BATTLES_ENV_NAME, "1
 #: 连续猛打不像真人，也更容易被风控注意到。
 TOP_PVP_INTERVAL_ENV_NAME: Final[str] = "CHERRYTALE_TOP_PVP_INTERVAL"
 
-#: 默认间隔（秒）。
-#:
-#: 【为什么是 15 秒（2026-09-25 用户要求）】
-#: 原来是 2 秒 —— 连打十场只要 18 秒，节奏比真人快得多。15 秒只是"不着急"，
-#: 不改变任何协议行为；嫌慢就用环境变量 ``CHERRYTALE_TOP_PVP_INTERVAL``
-#: 或在荣耀之巅卡片里把「每场间隔」填小（卡片里填的值优先于这里）。
+#: 默认间隔（秒）。若未显式指定，默认与天命对决对齐采用 5.0~10.0 秒随机浮动。
 TOP_PVP_INTERVAL_SECONDS: Final[float] = float(
-    os.getenv(TOP_PVP_INTERVAL_ENV_NAME, "15") or "15"
+    os.getenv(TOP_PVP_INTERVAL_ENV_NAME, "0") or "0"
 )
+TOP_PVP_INTERVAL_MIN_ENV_NAME: Final[str] = "CHERRYTALE_TOP_PVP_INTERVAL_MIN"
+TOP_PVP_INTERVAL_MIN: Final[float] = float(os.getenv(TOP_PVP_INTERVAL_MIN_ENV_NAME, "5.0") or "5.0")
+TOP_PVP_INTERVAL_MAX_ENV_NAME: Final[str] = "CHERRYTALE_TOP_PVP_INTERVAL_MAX"
+TOP_PVP_INTERVAL_MAX: Final[float] = float(os.getenv(TOP_PVP_INTERVAL_MAX_ENV_NAME, "10.0") or "10.0")
+
+#: 天梯竞技场：允许挑战的对手最高战力上限（默认 3,000,000，杜绝防守强阵翻车）
+ARENA_MAX_OPPONENT_CP_ENV_NAME: Final[str] = "CHERRYTALE_ARENA_MAX_OPPONENT_CP"
+ARENA_MAX_OPPONENT_CP: Final[int] = int(os.getenv(ARENA_MAX_OPPONENT_CP_ENV_NAME, "3000000") or "3000000")
+
+#: 批次执行中任务之间的拟真切换间隔（秒，默认 0.6~1.2 秒）
+BATCH_TASK_INTERVAL_MIN_ENV_NAME: Final[str] = "CHERRYTALE_BATCH_INTERVAL_MIN"
+BATCH_TASK_INTERVAL_MIN: Final[float] = float(os.getenv(BATCH_TASK_INTERVAL_MIN_ENV_NAME, "0.6") or "0.6")
+BATCH_TASK_INTERVAL_MAX_ENV_NAME: Final[str] = "CHERRYTALE_BATCH_INTERVAL_MAX"
+BATCH_TASK_INTERVAL_MAX: Final[float] = float(os.getenv(BATCH_TASK_INTERVAL_MAX_ENV_NAME, "1.2") or "1.2")
+
 
 #: 「跳过战斗演出」：工具是否会**主动把服务端开关置为开启**（需求：默认要）。
 #:
@@ -723,6 +744,30 @@ TOP_PVP_SECTION_ID_ENV_NAME: Final[str] = "CHERRYTALE_TOP_PVP_SECTION_ID"
 TOP_PVP_SECTION_ID: Final[int] = int(
     os.getenv(TOP_PVP_SECTION_ID_ENV_NAME, "726010017") or "726010017"
 )
+
+
+# ---------------------------------------------------------------------------
+# 2.8.2 天命对决（WuDou PvP）自动挑战
+# ---------------------------------------------------------------------------
+#: 默认 0 = 只读（零消耗：不进战、不买次数）。想真打必须显式给 --battles N。
+WUDOU_PVP_BATTLES_ENV_NAME: Final[str] = "CHERRYTALE_WUDOU_PVP_BATTLES"
+WUDOU_PVP_BATTLES: Final[int] = int(os.getenv(WUDOU_PVP_BATTLES_ENV_NAME, "0") or "0")
+
+#: 单次运行的硬上限（防手误多打一个 0）
+WUDOU_PVP_MAX_BATTLES_ENV_NAME: Final[str] = "CHERRYTALE_WUDOU_PVP_MAX_BATTLES"
+WUDOU_PVP_MAX_BATTLES: Final[int] = int(os.getenv(WUDOU_PVP_MAX_BATTLES_ENV_NAME, "10") or "10")
+
+#: 战斗间隔下限（秒，模拟玩家 Skip + 翻牌用时）
+WUDOU_PVP_INTERVAL_MIN_ENV_NAME: Final[str] = "CHERRYTALE_WUDOU_PVP_INTERVAL_MIN"
+WUDOU_PVP_INTERVAL_MIN: Final[float] = float(os.getenv(WUDOU_PVP_INTERVAL_MIN_ENV_NAME, "5.0") or "5.0")
+
+#: 战斗间隔上限（秒）
+WUDOU_PVP_INTERVAL_MAX_ENV_NAME: Final[str] = "CHERRYTALE_WUDOU_PVP_INTERVAL_MAX"
+WUDOU_PVP_INTERVAL_MAX: Final[float] = float(os.getenv(WUDOU_PVP_INTERVAL_MAX_ENV_NAME, "10.0") or "10.0")
+
+#: 选人策略：lowest_power (默认低战优先，稳赢), npc_first (优先NPC陪练), rank_first (优先高排名冲榜)
+WUDOU_PVP_STRATEGY_ENV_NAME: Final[str] = "CHERRYTALE_WUDOU_PVP_STRATEGY"
+WUDOU_PVP_STRATEGY: Final[str] = os.getenv(WUDOU_PVP_STRATEGY_ENV_NAME, "lowest_power").strip().lower()
 
 
 # ---------------------------------------------------------------------------
@@ -928,6 +973,23 @@ SELECTION_STATE_FILE_ENV_NAME: Final[str] = "CHERRYTALE_SELECTION_STATE"
 SELECTION_STATE_FILE: Final[Path] = Path(
     os.getenv(SELECTION_STATE_FILE_ENV_NAME, "")
     or (PROJECT_ROOT / ".selection_state.json")
+)
+
+#: 主动任务卡片"哪些是展开的"（界面偏好）的服务端持久化文件的**环境变量名**（2026-10-16）。
+#:
+#: 【为什么另开一份，不并进 SELECTION_STATE_FILE】
+#: 语义不同（那个是执行决策、这个是界面记忆），且 ``services/selection_state.py``
+#: 在版本不符时会把整份文件丢弃 —— 为一条界面记忆付"用户勾选与参数被清空一次"
+#: 的代价不划算。工程里 daily / banquet / spend / selection / login_signin
+#: 本来也各自独立一份（同一个范式）。
+#:
+#: 【安全约束】文件里只有任务名与时间戳（不含任何凭据），已加入 ``.gitignore``。
+UI_PREFS_STATE_FILE_ENV_NAME: Final[str] = "CHERRYTALE_UI_PREFS_STATE"
+
+#: 展开状态持久化文件的默认路径（工程根、带前导点，与 ``.selection_state.json`` 同级同风格）。
+UI_PREFS_STATE_FILE: Final[Path] = Path(
+    os.getenv(UI_PREFS_STATE_FILE_ENV_NAME, "")
+    or (PROJECT_ROOT / ".ui_prefs.json")
 )
 
 #: 自动刷新的**星期**（``datetime.weekday()`` 口径：周一 = 0 → 周三 = 2）。

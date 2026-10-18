@@ -6,22 +6,22 @@
 >
 > 安全优先：默认只读、钻石消费默认关闭、支持演练模式 —— 不填参数就不会花掉任何资源。
 
-![version](https://img.shields.io/badge/version-1.0.0-blue)
+![version](https://img.shields.io/badge/version-1.1.0-blue)
 
 ![python](https://img.shields.io/badge/python-3.11-3776AB?logo=python\&logoColor=white)
 
 ![platform](https://img.shields.io/badge/platform-Windows%20%7C%20Android-0078D4)
 
-![tests](https://img.shields.io/badge/tests-1807%20cases-brightgreen)
+![tests](https://img.shields.io/badge/tests-2052%20cases-brightgreen)
 
-![tasks](https://img.shields.io/badge/tasks-27-blue)
+![tasks](https://img.shields.io/badge/tasks-37-blue)
 
 ![protocol](https://img.shields.io/badge/packets-868-purple)
 
 ![license](https://img.shields.io/badge/license-GPLv3-blue)
 
-> **当前版本：`1.0.0`（正式版）** —— 首个稳定版本，四处版本号由 `tools/release.py` 统一维护。  
-> 双端产物：`CherrytaleTool.exe`（Windows 免安装）· `CherrytaleTool-1.0.0.apk`（Android）。
+> **当前版本：`1.1.0`（正式版）** —— 支持自动战斗推演、主动任务一键执行、日常全闭环；四处版本号由 `tools/release.py` 统一维护。  
+> 双端产物：`CherrytaleTool.exe`（Windows 免安装）· `CherrytaleTool-1.1.0.apk`（Android）。
 
 ---
 
@@ -36,6 +36,28 @@
 **👉 [afdian.com/a/cgbcacg](https://afdian.com/a/cgbcacg)**
 
 不打赏也完全没关系，用着顺手就是最好的回报。遇到问题欢迎提 Issue。
+
+---
+
+## 📢 1.1.0 更新说明
+
+从 1.0.0 到 1.1.0，任务由 27 个扩充至 **37 个**，重点补全了战斗自动推演、主动任务一键批量执行与全任务日志精简降噪：
+
+- ⚔️ **全自动战斗接入**：新增 **天梯竞技场**、**天命对决**、**辉煌航迹试炼**、**失控炼成阵** 4 大战斗任务，自动择弱匹配推演，省去每天手动进游戏点跳过。
+- ⚡ **主动任务「一键执行」**：主动任务卡片支持勾选，顶部新增「全选 / 一键执行」，按最优顺序（宴席体力优先）批量跑完，且支持中途随时安全停止。
+- 🎁 **日常任务全闭环**：
+  - 新增 **每日任务自动补齐**（自动小升 1 级、升 1 级技能、强化装备、英雄赠礼、好友送礼、契约拼图并统一领宝箱，只补未完成项）；
+  - 新增 **好友赠礼一键领取**（一键收下好友送来的所有礼物与体力）；
+  - **登录签到自动补发**，长期保持登录状态也不会漏领每日签到奖励。
+- 💎 **专属钻石使用区**：将买体力与购买门票（竞技场 / 天命对决 / 荣耀之巅）独立成组，带防超买校验，防止误点消耗。
+- 🧹 **全任务日志精简与降噪**：
+  - **结果只说人话**：全面重构所有任务的运行输出，剔除大段免责式套话与内部排查信息，统一精简为一目了然的事实；
+  - **过滤技术噪声**：清理界面上的无意义裸 ID 串（如卡池编号、矿点槽位刷屏、冗余错误码等），将其全部下沉至开发者日志；
+  - **独立实时进度通道**：战斗与推演引入逐场进度流实时反馈，准备动作与等待提示不再刷屏；
+  - **修复多处统计与提示 Bug**：消除月卡礼包重复计数、宴席弹窗反复弹出等问题。
+- 🛠️ **界面体验与状态记忆**：
+  - 服务端记住主动任务卡片的展开/折叠状态，刷新页面或重启不复位；
+  - 彻底修复展开卡片时执行按钮偶发闪烁的显示 Bug。
 
 ---
 
@@ -55,6 +77,7 @@
 ## 目录
 
 - [☕ 支持作者](#-支持作者)
+- [📢 1.1.0 更新说明](#-110-更新说明)
 - [一、这是什么](#一这是什么)
 - [二、能做什么：任务清单](#二能做什么任务清单)
 - [三、四种入口](#三四种入口)
@@ -84,7 +107,7 @@ models/（报文模型）  crypto/（签名与编码）
 client/（HTTP 通信层：Session / 头 / TLS / 异常重试）
         │  ② 发送：send() 联网
         ▼
-tasks/（27 个可执行任务）→ services/（装配 · 调度 · 消费闸门）
+tasks/（37 个可执行任务）→ services/（装配 · 调度 · 消费闸门）
         │  ③ 四种入口共用同一套执行逻辑
         ▼
 main.py（CLI）  ·  web_server.py + web/ + webapi/（网页）  ·  main_gui.py（桌面窗口）
@@ -113,15 +136,16 @@ CherrytaleTool.exe（PyInstaller）  ·  CherrytaleTool-<版本>.apk（Chaquopy�
 
 ## 二、能做什么：任务清单
 
-共 **27 个任务**，按**使用者的风险视角**分两组（而不是按开发者的功能视角）：能不能无脑全勾，才是使用者关心的事。
+共 **37 个任务**，按**使用者的风险视角与界面分区**分为三组：能不能无脑全勾，才是使用者关心的事。
 
-### 自动任务（纯领取 / 只读，不消耗任何资源，默认勾选）19 个
+### 自动任务（纯领取 / 只读，不消耗任何资源，默认勾选）21 个
 
 | 任务名                        | 名称          | 说明                   |
 | -------------------------- | ----------- | -------------------- |
 | `handshake`                | 网关握手        | 网关连通性握手（不需要登录态）      |
 | `login`                    | 登录 / 换号     | 登录游戏并同步账号会话          |
 | `mail`                     | 邮件一键领取      | 领取全部未读邮件             |
+| `friend_gift_claim`        | 好友赠礼一键领取   | 领取好友送来的全部礼物（零消耗）     |
 | `wallet`                   | 金币 / 钻石查询   | 查询金币、钻石与体力数据         |
 | `roles`                    | 角色名册查询      | 拉取账号下的角色名册           |
 | `free_gift`                | 特惠礼包免费领取    | 商城每日免费礼包（零消费）        |
@@ -129,6 +153,7 @@ CherrytaleTool.exe（PyInstaller）  ·  CherrytaleTool-<版本>.apk（Chaquopy�
 | `wudou_status`             | 天命对决状态      | 查询天命对决挑战状态           |
 | `yimo_status`              | 失控炼成阵状态     | 查询失控炼成阵挑战状态          |
 | `main_stage_status`        | 主线关卡进度状态    | 查询主线关卡推进进度           |
+| `top_pvp_status`           | 荣耀之巅状态      | 查询段位、排名与积分（只读）       |
 | `bbq_status`               | 宴席两顿状态      | 查询早/晚两顿宴席可吃、可邀请状态    |
 | `alliance_sign_in`         | 工会签到        | 每日自动签到               |
 | `alliance_mining_personal` | 工会个人挖矿      | 收获矿产并开启空闲矿           |
@@ -139,18 +164,31 @@ CherrytaleTool.exe（PyInstaller）  ·  CherrytaleTool-<版本>.apk（Chaquopy�
 | `yimo_box`                 | 失控炼成阵宝箱     | 领取全服通关宝箱（3 份全满后自动停止） |
 | `daily_box`                | 日常 / 周常活跃宝箱 | **仅**领取已达标的宝箱        |
 
-### 主动任务（会消耗资源或需要参数，默认不勾选，运行前二次确认）8 个
+### 主动任务（会消耗资源或需要参数，默认不勾选，支持一键批量执行）12 个
 
-| 任务名               | 名称          | 消耗                  |
-| ----------------- | ----------- | ------------------- |
-| `sweep_activity`  | 降临 / 活动关卡扫荡 | 体力 + 扫荡券            |
-| `top_pvp_battle`  | 荣耀之巅        | 挑战次数                |
-| `bbq_energy`      | 宴席          | 邀请好友花钻石（默认关闭）       |
-| `buy_energy`      | 购买体力        | 钻石（每次 120 点）        |
-| `sweep_material`  | 素材关卡与元素试炼   | 每日挑战次数（不耗体力）        |
-| `market_buy`      | 一般市集购买      | 金币                  |
-| `alliance_donate` | 工会金币捐献      | 25,000 金币 / 次（默认满档） |
-| `push_main_stage` | 主线关卡通关      | 体力                  |
+| 任务名               | 名称          | 消耗 / 说明                                              |
+| ----------------- | ----------- | ------------------------------------------------------- |
+| `bbq_energy`      | 宴席          | 领取体力；邀请好友需钻石（默认关，一键优先执行）                  |
+| `sweep_activity`  | 降临 / 活动关卡扫荡 | 体力 + 扫荡券                                           |
+| `top_pvp_battle`  | 荣耀之巅        | 挑战次数（自动匹配并推演战斗）                                |
+| `battle_arena`    | 天梯竞技场       | 竞技场挑战次数（自动择弱匹配对手）                            |
+| `wudou_pvp_battle`| 天命对决        | 挑战次数（支持策略推演）                                    |
+| `battle_experiment`| 辉煌航迹试炼     | 试炼与终极挑战（自动推演并领取奖励）                          |
+| `battle_yimo`     | 失控炼成阵       | 挑战次数（自动挑战 Boss 结算发奖）                           |
+| `sweep_material`  | 素材关卡与元素试炼   | 每日挑战次数（不耗体力）                                    |
+| `market_buy`      | 一般市集购买      | 金币                                                    |
+| `alliance_donate` | 工会金币捐献      | 25,000 金币 / 次（默认满档；成功后当日置灰跳过）             |
+| `daily_task_auto` | 每日任务自动执行   | 自动补齐 6 项日常缺口动作（升级/升技/装备/赠礼/拼图）并统一结算宝箱 |
+| `push_main_stage` | 主线关卡通关      | 体力（置底，不参与一键执行以防阻塞）                           |
+
+### 钻石使用任务（消耗钻石，需开启钻石总闸并在专用面板手动确认）4 个
+
+| 任务名               | 名称          | 说明                                                    |
+| ----------------- | ----------- | ------------------------------------------------------- |
+| `buy_energy`      | 购买体力        | 钻石（每次 120 点；前置防超量发包校验）                       |
+| `buy_arena_ticket`| 购买竞技场挑战次数| 钻石（每次 1 次；前置防超量发包校验）                        |
+| `buy_wudou_ticket`| 购买天命对决挑战次数| 钻石（每次 1 次；前置防超量发包校验）                        |
+| `buy_top_pvp_ticket`| 购买荣耀之巅挑战次数| 钻石（每次 1 次；前置防超量发包校验）                        |
 
 > 任务清单以 `services/task_spec.py` 为**唯一来源**，命令行与网页表单都从它派生；有机器化测试保证"参数面"不会两边抄歪。
 
@@ -254,7 +292,7 @@ web_server.py / main_gui.py            ← 进程入口：端口 / 窗口 / 打�
 | `web/`      | **纯静态**前端资源                                        |
 | `webapi/`   | HTTP 服务：路由 / 鉴权 / 状态机 / 日志流（PC 与 Android 同一份）      |
 | `tools/`    | 工程化脚本（生成协议表、打包发布、安全执行器……）                          |
-| `tests/`    | 各模块最小可运行单元测试（77 个测试文件 / 1807 个用例）                  |
+| `tests/`    | 各模块最小可运行单元测试（96 个测试文件 / 2033 个用例）                  |
 | `config.py` | 域名、固定参数与账号配置（**严禁硬编码敏感信息**）                        |
 
 ### 两条硬性工程纪律
@@ -282,12 +320,12 @@ Cherrytale tool One/
 ├── crypto/                  # 签名与编解码（aes / hash / sign / xor / vcode）
 ├── models/                  # 协议报文模型 + 自动生成的协议号表 / 字段表
 ├── services/                # 调度层（runner / task_spec / task_registry / daily_state）
-├── tasks/                   # 27 个业务任务（每个模块一个 @register_task）
+├── tasks/                   # 37 个业务任务（每个模块一个 @register_task）
 ├── web/                     # 前端静态资源（index.html / login.html / assets/）
 ├── webapi/                  # HTTP 服务（app.py 桌面 · android_app.py 安卓 · state / logstream）
 ├── tools/                   # 工程化脚本（40 个）
 │   └── android_shims/       # 安卓端 pydantic 纯 Python 垫片
-├── tests/                   # 单元测试（77 个测试文件 / 1807 个用例）
+├── tests/                   # 单元测试（96 个测试文件 / 2033 个用例）
 ├── notes/                   # 架构说明 / 设计取舍 / 待确认问题（**项目的知识档案**）
 ├── android/                 # Android Studio 工程（Chaquopy）
 ├── assets/                  # 图标资源

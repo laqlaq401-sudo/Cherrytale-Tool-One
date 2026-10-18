@@ -105,7 +105,7 @@ class TestArenaStatus:
         assert result.ok is True
         assert sent_packet_ids(recorded) == [ARENA_HOME_ID]
         assert result.data["challenge_count"] == 3
-        assert "可挑战次数=3" in result.message
+        assert "可挑战 3 次" in result.message
 
     def test_dry_run_sends_nothing(self, monkeypatch: pytest.MonkeyPatch) -> None:
         recorded = patch_transport(monkeypatch, handler)

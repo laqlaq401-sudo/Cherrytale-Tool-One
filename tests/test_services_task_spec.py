@@ -24,6 +24,7 @@ import config
 import main
 from services.task_spec import (
     GROUPS,
+    INTERVAL_PARAM,
     RUN_LEVEL_PARAMS,
     TASK_SPECS,
     ParamSpec,
@@ -80,6 +81,8 @@ def _param(name: str) -> ParamSpec:
     from_top_pvp = TASK_SPECS["top_pvp_battle"].param(name)
     if from_top_pvp is not None:
         return from_top_pvp
+    if name == "interval":
+        return INTERVAL_PARAM
     raise AssertionError(f"参数 {name!r} 既不在运行级、也不在荣耀之巅的参数里")
 
 
@@ -185,12 +188,12 @@ class TestTopPvpParamPlacement:
         assert names == {"dry_run", "allow_diamond"}
 
     def test_top_pvp_owns_its_full_param_set(self) -> None:
-        """场数 / 间隔 —— 荣耀之巅的可调项一个都不许跑到别的卡片里。
+        """场数 —— 荣耀之巅的可调项一个都不许跑到别的卡片里。
 
-        ★ 2026-09-25 第二批：原第三项「保留战斗演出」按需求删除，
-        战斗演出行为固定为跳过（见 ``tasks/top_pvp.py``）。
+        ★ 2026-10-18：战斗时间间隔已严格按分类时间拟真执行，
+        「每场间隔」参数从规格表与前端卡片彻底移除，卡片只保留「打几场」。
         """
-        assert TASK_SPECS["top_pvp_battle"].param_names == ("battles", "interval")
+        assert TASK_SPECS["top_pvp_battle"].param_names == ("battles",)
 
     def test_keep_animation_flag_is_gone(self) -> None:
         """「保留战斗演出」的三层实现都要消失：规格参数、CLI 旗标、任务形参。
@@ -204,29 +207,20 @@ class TestTopPvpParamPlacement:
         assert "keep_battle_animation" not in _run_dests()
         assert TASK_SPECS["top_pvp_battle"].param("keep_battle_animation") is None
 
-    def test_interval_default_is_15_seconds(self) -> None:
-        """每场间隔默认 15 秒（2026-09-25 需求）。
-
-        环境变量 ``CHERRYTALE_TOP_PVP_INTERVAL`` 可以覆盖默认值，
-        所以先隔离它 —— 否则"在别人机器上跑"会因为环境不同而假失败。
-        """
-        if os.getenv(config.TOP_PVP_INTERVAL_ENV_NAME):
-            pytest.skip("本机用环境变量覆盖了间隔，这里测不了默认值")
-        assert config.TOP_PVP_INTERVAL_SECONDS == 15.0
-        interval = TASK_SPECS["top_pvp_battle"].param("interval")
-        assert interval is not None
-        # 不填 = 用配置值（所以界面上的默认行为就是 config 里那个数）
-        assert interval.coerce(None) is None
-        assert "15" in interval.hint, "hint 里要写明默认 15 秒，否则用户在界面看不出默认值"
+    def test_interval_params_are_gone_from_battle_tasks(self) -> None:
+        """战斗间隔已由分类时间拟真严格执行，三层实现全面移除：规格参数、CLI 旗标、前端控件。"""
+        assert "interval" not in _run_dests()
+        assert TASK_SPECS["top_pvp_battle"].param("interval") is None
+        assert TASK_SPECS["battle_arena"].param("interval") is None
+        assert TASK_SPECS["wudou_pvp_battle"].param("interval") is None
+        assert TASK_SPECS["battle_yimo"].param("interval") is None
 
     def test_top_pvp_is_marked_as_consuming(self) -> None:
         """填了场数必须触发二次确认（``battles.danger`` → ``spec.consumes``）。"""
         assert TASK_SPECS["top_pvp_battle"].consumes is True
         battles = TASK_SPECS["top_pvp_battle"].param("battles")
-        assert battles is not None and battles.danger is True
-        # 间隔只是节奏控制，不该跟着标"消耗资源"（否则确认框里多一条噪音）
-        interval = TASK_SPECS["top_pvp_battle"].param("interval")
-        assert interval is not None and interval.danger is False
+        # 间隔已由拟真接管并移出参数列表，不进卡片也不该标"消耗资源"
+        assert TASK_SPECS["top_pvp_battle"].param("interval") is None
 
 
 # ---------------------------------------------------------------------------
@@ -276,13 +270,20 @@ class TestCoerce:
         # 网页表单交上来的是字符串，空串也必须等于"没填"（否则会拿 "" 去 float()）
         assert interval.coerce("") is None
 
-    def test_battles_default_none_means_use_config(self) -> None:
-        # 同上：它现在是「荣耀之巅」卡片的「打几场」
+    def test_battles_default_zero_means_exhaust(self) -> None:
+        """★ 2026-10-18：荣耀之巅的「打几场」默认 0 = 打到次数用完。
+
+        四个战斗任务（荣耀之巅 / 天梯竞技场 / 天命对决 / 失控炼成阵）口径统一；
+        旧语义（0 = 只读）已删除，"只看不打"改用只读任务 ``top_pvp_status``。
+        """
         battles = _param("battles")
-        assert battles.default is None
-        assert battles.coerce(None) is None
+        assert battles.default == 0
+        assert battles.coerce(None) == 0
+        assert battles.coerce("") == 0
         assert battles.coerce(0) == 0
         assert battles.coerce("3") == 3
+        # 文案必须与另外三个战斗任务一致，否则用户会以为它还是"只读"
+        assert "打完所有剩余次数" in battles.hint
 
     def test_danger_flags_mark_resource_consumers(self) -> None:
         """会消耗资源的参数必须标出来（UI 据此要求二次确认）。"""
@@ -374,19 +375,17 @@ class TestNormalize:
         }
 
     def test_cli_run_level_overrides(self) -> None:
-        """``--battles`` / ``--interval`` 仍是 ``run`` 的旗标，但归荣耀之巅任务参数。
+        """``--battles`` 仍是 ``run`` 的旗标，归荣耀之巅任务参数。
 
-        ★ 2026-09-25：这两个值不再进 ``run_level_from_cli``，而是由
-        ``task_params_from_cli(ns, "top_pvp_battle")`` 取出 —— 这正是
-        "命令行用法不变、界面上参数却出现在荣耀之巅卡片里"能同时成立的原因。
+        ★ 2026-09-25：该值不再进 ``run_level_from_cli``，而是由
+        ``task_params_from_cli(ns, "top_pvp_battle")`` 取出。
         """
         ns = main.build_parser().parse_args(
-            ["run", "top_pvp_battle", "--dry-run", "--battles", "3", "--interval", "0.5"]
+            ["run", "top_pvp_battle", "--dry-run", "--battles", "3"]
         )
         assert run_level_from_cli(ns) == {"dry_run": True, "allow_diamond": False}
         assert task_params_from_cli(ns, "top_pvp_battle") == {
             "battles": 3,
-            "interval": 0.5,
         }
 
     def test_unregistered_task_returns_empty(self) -> None:
@@ -694,6 +693,57 @@ class TestParamViewHints:
         )
         assert param_view(self._task_param("sweep_material", "area"))["allow_manual"] is False
         assert param_view(self._task_param("sweep_material", "section"))["allow_manual"] is False
+
+
+# ---------------------------------------------------------------------------
+# ⑤'' 钻石使用的「购买次数」：步进器 + 下限 1（★ 2026-10-18 用户需求）
+# ---------------------------------------------------------------------------
+class TestDiamondBuyTimesParams:
+    """四个「购买次数」必须是**步进器**且**下限 1**（取消 0 次 / 不再提供只读）。
+
+    【为什么守这两条】
+    - 前端 ``renderParam`` 的第一分支是"有 ``choices`` 就画下拉"，所以
+      **``choices`` 必须为空** —— 否则改了半天还是下拉；
+    - 删掉 ``choices`` 后数字参数会走步进器，此时**没有 ``minimum`` 就能填 0**，
+      等于"取消 0 次"没做到。两条缺任何一条，界面都会静默退回旧行为，
+      而后端其余测试全绿 —— 只有用户点开页面才看得出来。
+    """
+
+    TASKS = (
+        "buy_energy",
+        "buy_arena_ticket",
+        "buy_wudou_ticket",
+        "buy_top_pvp_ticket",
+    )
+
+    @staticmethod
+    def _param(task: str, name: str) -> ParamSpec:
+        for spec in TASK_SPECS[task].params:
+            if spec.name == name:
+                return spec
+        raise AssertionError(f"任务 {task} 没有参数 {name}")
+
+    def test_times_has_no_choices_so_the_ui_renders_a_stepper(self) -> None:
+        for task in self.TASKS:
+            assert self._param(task, "times").choices == (), task
+
+    def test_times_lower_bound_is_one_and_default_is_in_range(self) -> None:
+        for task in self.TASKS:
+            spec = self._param(task, "times")
+            assert spec.minimum == 1, task
+            # 默认值不能低于下限，否则首屏就是"打开即非法"
+            assert spec.default is not None and spec.default >= 1, task
+
+    def test_param_view_carries_minimum(self) -> None:
+        from services.task_spec import param_view
+
+        assert param_view(self._param("buy_energy", "times"))["minimum"] == 1
+        # 没有下限的参数照旧下发 None（前端缺省 0，battles 的 0 语义不变）
+        assert param_view(self._param("sweep_activity", "times"))["minimum"] is None
+
+    def test_buy_energy_declares_its_budget_cap(self) -> None:
+        """``max_cost`` 必须登记进规格表，否则网页永远设不了预算上限（静默死角）。"""
+        assert "max_cost" in [spec.name for spec in TASK_SPECS["buy_energy"].params]
 
 
 # ---------------------------------------------------------------------------

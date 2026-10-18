@@ -116,7 +116,7 @@ class TestDecoding:
         assert res.challengeCount == 3
         assert res.buyedCount == 1
         assert res.opponent_count() == 0
-        assert "可挑战次数=3" in res.summary()
+        assert "可挑战 3 次" in res.summary()
 
     def test_wudou_challenge_home_res(self) -> None:
         payload = (
@@ -124,20 +124,20 @@ class TestDecoding:
         )
         res = WuDouChallengeHomeRes.decode(payload)
         assert (res.myRanking, res.npc_times, res.challenge_times) == (149, 2, 5)
-        assert "剩余挑战次数=5" in res.summary()
+        assert "剩余挑战次数 5" in res.summary()
 
     def test_yimo_state_res(self) -> None:
         payload = encode_int(1, 4) + encode_int(3, 53247) + encode_string(7, "活動中")
         res = GetYimoStateRes.decode(payload)
         assert res.remainCount == 4
         assert res.has_boss_data() is False
-        assert "剩余次数=4" in res.summary()
+        assert "剩余次数 4" in res.summary()
         assert "活動中" in res.summary()
 
     def test_wudou_home_res(self) -> None:
         res = WuDouHomeRes.decode(encode_int(5, 7) + encode_int(6, 9))
         assert (res.myGroupID, res.challenge_times) == (7, 9)
-        assert "剩余挑战次数=9" in res.summary()
+        assert "剩余挑战次数 9" in res.summary()
 
 
 # ---------------------------------------------------------------------------

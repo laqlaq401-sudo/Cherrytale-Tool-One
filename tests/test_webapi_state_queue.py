@@ -97,6 +97,31 @@ def test_runs_are_executed_in_submission_order(
     assert calls == ["mail", "wallet"]
 
 
+def test_start_marks_settle_login_signin_for_queued_runs(
+    manager: state.RunManager, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """★ 2026-10-17（方向 A）：排队批次 = "进游戏执行" → 置位签到补触发。
+
+    ``RunRequest`` 是 frozen dataclass：``start()`` 用 ``replace`` 置位 ——
+    排队的那一份为 True，而调用方手里的原对象**不变**（不会被悄悄改掉）。
+    """
+    seen: list[bool] = []
+
+    def fake_run_tasks(context, request, emit=None, on_start=None, on_finish=None, report=None):
+        seen.append(request.settle_login_signin)
+        return runner.RunReport(
+            steps=[runner.StepResult(name="mail", ok=True, message="ok")]
+        )
+
+    monkeypatch.setattr(runner, "run_tasks", fake_run_tasks)
+
+    original = runner.RunRequest(tasks=(runner.TaskRequest(name="mail"),))
+    manager.start(original)
+    _wait_until(lambda: len(seen) == 1)
+    assert seen == [True]
+    assert original.settle_login_signin is False
+
+
 def test_queued_batches_are_visible_in_status(
     manager: state.RunManager, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -110,6 +135,53 @@ def test_queued_batches_are_visible_in_status(
     snapshot = manager.status()
     assert snapshot["running"] is True
     assert [step["name"] for step in snapshot["steps"]] == ["mail", "wallet"]
+    _wait_until_idle(manager)
+
+
+def test_finished_batches_never_look_pending_in_status(
+    manager: state.RunManager, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """★ 2026-10-16：前端「执行中 / 排队中」的派生判据必须安全。
+
+    【它钉住什么（2026-10-16 的"按钮闪烁"修复所依赖的前提）】
+    前端 ``pollOnce`` 把 ``/api/status`` 的 ``steps`` 里 status 为 pending/running
+    的步骤当成"这个任务在跑或在排队"，据此把按钮显示成「停止执行」。
+    而 ``steps`` 里**还混着最近 10 批已经完成的步骤**（``webapi/state.py`` 的
+    ``_recent[-10:]``）—— 那些步骤一旦出现 pending/running，早就跑完的任务
+    就会被永久显示成"可以停止"。
+    所以这条判据是"**已完成批次的步骤状态恒不属于 pending/running**"。
+
+    顺带钉住两件事：① 在跑 / 排队的步骤必须是 pending/running（前端才认得出）；
+    ② 每条步骤都带 ``run_id``，且排队批的 run_id 与当前批不同 ——
+    前端"精确停止"（``stopCurrentRun`` 传 run_id）就是靠它定位要撤哪一批。
+    """
+    calls: list[str] = []
+    # wallet 会卡住直到被中断 —— 用它稳定制造"一批在跑、后面还排着队"的形状
+    monkeypatch.setattr(
+        runner, "run_tasks", _fake_run_tasks(calls, blocking=frozenset({"wallet"}))
+    )
+
+    manager.start(runner.RunRequest(tasks=(runner.TaskRequest(name="mail"),)))
+    _wait_until_idle(manager)  # 这一批跑完 → 被收进 _recent
+    manager.start(runner.RunRequest(tasks=(runner.TaskRequest(name="wallet"),)))
+    manager.start(runner.RunRequest(tasks=(runner.TaskRequest(name="handshake"),)))
+    _wait_until(lambda: "wallet" in calls)
+
+    snapshot = manager.status()
+    assert snapshot["running"] is True
+    by_name = {step["name"]: step for step in snapshot["steps"]}
+    assert set(by_name) == {"mail", "wallet", "handshake"}
+    # ① 已完成的那一批：绝不能是 pending/running
+    assert by_name["mail"]["status"] not in {"pending", "running"}
+    # ② 在跑的那一批与排队的那一批：必须是 pending/running
+    assert by_name["wallet"]["status"] in {"pending", "running"}
+    assert by_name["handshake"]["status"] == "pending"
+    # ③ 每条步骤都带 run_id（精确停止的定位依据）
+    assert all(step["run_id"] for step in snapshot["steps"])
+    # ④ 排队批的 run_id 与"当前正在跑"的那批不同
+    assert by_name["handshake"]["run_id"] != snapshot["run_id"]
+
+    manager.stop()
     _wait_until_idle(manager)
 
 
@@ -304,3 +376,48 @@ def test_hang_watchdog_dumps_even_with_zero_inflight(
 
     assert dumped, "inflight=0 但有运行卡住时，看门狗必须转储"
     assert "1 个运行" in dumped[0]
+
+
+def test_run_inline_yields_to_a_running_batch(
+    manager: state.RunManager, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """★ 2026-10-18 让行：有批在跑/排队时，只读查询**不抢闸门**。
+
+    【它钉住什么】启动时 ``/api/player?full=1``（6 个只读任务串行）与自动任务
+    几乎同时到达。旧实现是"先到先得"：读抢到闸门，写就得等读全跑完 ——
+    表现是"已受理运行，但第一个任务迟迟不开始"（实测 10~30 秒）。
+    现在只要有排队/执行中的批次，``run_inline`` 立刻抛 ``RunBusyError``，
+    连试都不试，写者因此不会被读挡住。
+    """
+    calls: list[str] = []
+    monkeypatch.setattr(
+        runner, "run_tasks", _fake_run_tasks(calls, blocking=frozenset({"mail"}))
+    )
+
+    manager.start(runner.RunRequest(tasks=(runner.TaskRequest(name="mail"),)))
+    _wait_until(lambda: calls == ["mail"])  # worker 已拿到闸门、正在跑
+
+    with pytest.raises(state.RunBusyError):
+        manager.run_inline(
+            runner.RunRequest(tasks=(runner.TaskRequest(name="wallet"),))
+        )
+
+    # 读没有把队列挤掉：停止后这一批能正常收尾
+    manager.stop()
+    _wait_until_idle(manager)
+    assert calls == ["mail"]
+
+
+def test_run_inline_still_runs_when_queue_is_empty(
+    manager: state.RunManager, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """让行只在"有批"时生效；空闲时只读查询照常执行（别把它一起关死）。"""
+    calls: list[str] = []
+    monkeypatch.setattr(runner, "run_tasks", _fake_run_tasks(calls))
+
+    report = manager.run_inline(
+        runner.RunRequest(tasks=(runner.TaskRequest(name="wallet"),))
+    )
+
+    assert calls == ["wallet"]
+    assert report.ok is True

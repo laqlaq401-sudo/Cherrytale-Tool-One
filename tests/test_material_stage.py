@@ -13,10 +13,6 @@ from models.material_stage import (
     ALLOWED_PACKET_IDS,
     FORBIDDEN_PACKET_IDS,
     AreaStateClass,
-    FightingRequestPacket,
-    FightingResponseRes,
-    FightingResultPacket,
-    FightingResultRes,
     GetAreaByDifficultyPacket,
     GetAreaByDifficultyRes,
     SWEEP_TICKET_ITEM_ID,
@@ -131,11 +127,11 @@ def test_resolve_material_section() -> None:
 
 
 def test_packet_guard_whitelist() -> None:
-    """出站包白名单必须包含 11003, 11009, 11015, 11017，禁发包含 11027, 24005。"""
+    """出站包白名单必须包含 11001, 11009，绝不包含 11015, 11017，禁发包含 11027, 24005。"""
     assert "GetAreaByDifficultyPacket" in ALLOWED_PACKET_IDS
     assert "SweepSectionPacket" in ALLOWED_PACKET_IDS
-    assert "FightingRequestPacket" in ALLOWED_PACKET_IDS
-    assert "FightingResultPacket" in ALLOWED_PACKET_IDS
+    assert "FightingRequestPacket" not in ALLOWED_PACKET_IDS
+    assert "FightingResultPacket" not in ALLOWED_PACKET_IDS
     assert "BuyActivityStagePacket" in FORBIDDEN_PACKET_IDS
     assert "BuyEnergyPacket" in FORBIDDEN_PACKET_IDS
 
@@ -269,9 +265,9 @@ def test_sweep_material_unpassed_without_allow_reports_ok(
     task.open_game_client = lambda: fake_client  # type: ignore[assignment]
 
     result = task.execute()
-    assert result.ok is True
-    assert "尚未首通" in result.message
-    assert not any(isinstance(p, FightingRequestPacket) for p in fake_client.sent)
+    assert len(fake_client.sent) == 2
+    assert isinstance(fake_client.sent[0], GetAreaByDifficultyPacket)
+    assert isinstance(fake_client.sent[1], SweepSectionPacket)
 
 
 def test_sweep_material_area_not_in_server_list_fails() -> None:
@@ -288,21 +284,12 @@ def test_sweep_material_area_not_in_server_list_fails() -> None:
     assert not any(isinstance(p, SweepSectionPacket) for p in fake_client.sent)
 
 
-def test_sweep_material_first_pass() -> None:
-    """★ 2026-10-04 新流程：扫荡回 errorCode=-1（未通关）→ 首通 → 重扫成功。
-
-    10.3 抓包里真实客户端素材流程是 11001 → 11009 直接扫，不发 11003 ——
-    "是否首通"由服务端的扫荡错误码告诉我们，不再前置预判。
-    """
+def test_sweep_material_unpassed_rejected() -> None:
+    """★ 2026-10-17 新规范：扫荡回 errorCode=-1（未通关）→ 严格安全阻断，不发任何战斗包。"""
     area_res = area_list_res(128000020)
-    token_res = FightingResponseRes(errorCode=0, fightToken=9999)
-    fight_res = FightingResultRes(errorCode=0)
-
     fake_client = FakeGameClient({
         GetAreaByDifficultyPacket: area_res,
-        FightingRequestPacket: token_res,
-        FightingResultPacket: fight_res,
-        SweepSectionPacket: [SweepSectionRes(errorCode=-1), SweepSectionRes(errorCode=0)],
+        SweepSectionPacket: SweepSectionRes(errorCode=-1),
     })
 
     task = SweepMaterialTask(
@@ -315,13 +302,11 @@ def test_sweep_material_first_pass() -> None:
 
     result = task.execute()
     assert result.ok is True
-    # ★ 2026-10-04 新流程：11001 → 11009(-1 未通关) → 11015 → 11017 → 11009 重扫
-    assert len(fake_client.sent) == 5
+    assert "尚未首通" in result.message
+    # 只发了 11001 与 11009，绝不发任何战斗包
+    assert len(fake_client.sent) == 2
     assert isinstance(fake_client.sent[0], GetAreaByDifficultyPacket)
     assert isinstance(fake_client.sent[1], SweepSectionPacket)
-    assert isinstance(fake_client.sent[2], FightingRequestPacket)
-    assert isinstance(fake_client.sent[3], FightingResultPacket)
-    assert isinstance(fake_client.sent[4], SweepSectionPacket)
 
 
 # ---------------------------------------------------------------------------

@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import logging
 import os
+import random
 import time
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
@@ -107,6 +108,15 @@ class RunRequest:
     同一套做法 —— "只有某一个任务认识的参数，就只从那个任务的参数里读"，
     不在本类上再放一份同义字段。两处各存一份的结果必然是
     "界面上填了、字段却没传"这类沉默的错（也正是"战斗次数跑到别的板块"的由来）。
+
+    【为什么有 ``settle_login_signin`` 字段（2026-10-17 · 方向 A）】
+    「登录签到（每日+活动）」原来只挂在登录动作两处，而会话持久化的日常里
+    根本不经过登录页 ⇒ 钩子从不执行（根因：``notes/login_signin_trigger_gap.md``）。
+    修复 = 在「当天第一次真正开始执行批次」时补一次触发 —— 本字段就是
+    "这次运行要不要管这件事"。**默认关**：测试与被直接构造的请求零副作用；
+    真实入口（``webapi/state.py::RunManager.start``、``main.py::cmd_run``）置位。
+    是否真的发包仍由钩子的幂等记账（每自然日每角色一次）裁决；演练模式与
+    含 ``login`` 任务的批次在 :func:`_settle_login_signin` 里被短掉。
     """
 
     tasks: Sequence[TaskRequest]
@@ -115,6 +125,9 @@ class RunRequest:
     account: str | None = None
     credentials: tuple[str, str] | None = None
     verbose: bool = False
+    #: ★ 2026-10-17（方向 A）：本次运行前是否尝试补发「登录签到」33055
+    #: （幂等、每自然日每角色一次）。默认关 —— 由真实入口置位；见类 docstring。
+    settle_login_signin: bool = False
 
     # ------------------------------------------------------------------
     # 派生判断（只写一次，两个入口共用）
@@ -149,6 +162,33 @@ class RunRequest:
             int(task.params.get("times") or 0) > 0
             for task in self.tasks
             if task.name == "buy_energy"
+        )
+
+    @property
+    def wants_buy_arena_ticket(self) -> bool:
+        """本次是否显式授权了「购买竞技场挑战次数」花钱用途（购买次数 > 0）。"""
+        return any(
+            int(task.params.get("times") or 0) > 0
+            for task in self.tasks
+            if task.name == "buy_arena_ticket"
+        )
+
+    @property
+    def wants_buy_wudou_ticket(self) -> bool:
+        """本次是否显式授权了「购买天命对决挑战次数」花钱用途（购买次数 > 0）。"""
+        return any(
+            int(task.params.get("times") or 0) > 0
+            for task in self.tasks
+            if task.name == "buy_wudou_ticket"
+        )
+
+    @property
+    def wants_buy_top_pvp_ticket(self) -> bool:
+        """本次是否显式授权了「购买荣耀之巅挑战次数」花钱用途（购买次数 > 0）。"""
+        return any(
+            int(task.params.get("times") or 0) > 0
+            for task in self.tasks
+            if task.name == "buy_top_pvp_ticket"
         )
 
     # ------------------------------------------------------------------
@@ -201,6 +241,12 @@ class RunRequest:
             purposes.add(SpendPurpose.BBQ_INVITE)
         if self.wants_buy_energy:
             purposes.add(SpendPurpose.BUY_ENERGY)
+        if self.wants_buy_arena_ticket:
+            purposes.add(SpendPurpose.BUY_ARENA_TICKET)
+        if self.wants_buy_wudou_ticket:
+            purposes.add(SpendPurpose.BUY_WUDOU_TICKET)
+        if self.wants_buy_top_pvp_ticket:
+            purposes.add(SpendPurpose.BUY_TOP_PVP_TICKET)
         return frozenset(purposes)
 
 
@@ -271,12 +317,18 @@ class RunReport:
         return [step for step in self.steps if not step.ok]
 
     def summary(self) -> str:
-        """一行汇总，例如 ``3/4 步成功（失败：sweep_activity）``。"""
+        """一行汇总，例如 ``3/4 步成功（失败：降临 / 活动关卡扫荡）``。"""
         if not self.steps:
             return "没有执行任何任务"
         text = f"{self.succeeded}/{len(self.steps)} 步成功"
         if self.failed:
-            text += "（失败：" + "，".join(step.name for step in self.failed) + "）"
+            # ★ 2026-10-18：用卡片上的**中文标题**，不再把 `sweep_activity`
+            # 这种英文任务名丢给用户 —— 他得回界面里逐个对照才认得出是哪个任务。
+            titles: list[str] = []
+            for step in self.failed:
+                spec = get_spec(step.name)
+                titles.append(spec.title if spec is not None else step.name)
+            text += "（失败：" + "、".join(titles) + "）"
         return text
 
 
@@ -730,7 +782,7 @@ def task_kwargs_for(
             # （"窗不覆盖优先于开关开着"，见 tasks/bbq.py::_execute_meal）。
             meal_keys = {"morning": "invite_morning", "evening": "invite_evening"}
             kwargs["invite"] = bool(params.get(meal_keys.get(meal, "")))
-    elif task.name == "buy_energy":
+    elif task.name in ("buy_energy", "buy_arena_ticket", "buy_wudou_ticket", "buy_top_pvp_ticket"):
         kwargs["times"] = int(params.get("times") or 0)
         if "max_cost" in params:
             kwargs["max_cost"] = int(params.get("max_cost") or 0)
@@ -749,8 +801,60 @@ def task_kwargs_for(
         kwargs["max_stages"] = int(params.get("max_stages") or 0)
         kwargs["delay_min"] = float(params.get("delay_min") or 15.0)
         kwargs["delay_max"] = float(params.get("delay_max") or 25.0)
+    elif task.name == "wudou_pvp_battle":
+        kwargs["strategy"] = params.get("strategy") or config.WUDOU_PVP_STRATEGY
+        task_battles = params.get("battles")
+        task_interval = params.get("interval")
+        if task_battles is None or task_battles == "":
+            cli_battles = context.run_options.battles if context.run_options else None
+            effective_battles = (
+                config.WUDOU_PVP_BATTLES if cli_battles is None else cli_battles
+            )
+        else:
+            effective_battles = int(task_battles)
 
-    if getattr(task_class, "accepts_run_options", False):
+        if task_interval is None or task_interval == "":
+            cli_interval = (
+                context.run_options.interval_seconds if context.run_options else 0.0
+            )
+            # 缺省时使用 0.0（由任务内部执行 5~10 秒随机分类时间拟真等待）
+            effective_interval = cli_interval
+        else:
+            effective_interval = float(task_interval)
+
+        kwargs["run_options"] = RunOptions(
+            battles=effective_battles,
+            max_battles=config.WUDOU_PVP_MAX_BATTLES,
+            interval_seconds=effective_interval,
+        )
+    elif task.name in ("battle_arena", "battle_yimo"):
+        task_battles = params.get("battles")
+        task_interval = params.get("interval")
+        if task_battles is None or task_battles == "":
+            cli_battles = context.run_options.battles if context.run_options else None
+            effective_battles = 0 if cli_battles is None else cli_battles
+        else:
+            effective_battles = int(task_battles)
+
+        if task_interval is None or task_interval == "":
+            cli_interval = (
+                context.run_options.interval_seconds if context.run_options else 0.0
+            )
+            # 缺省时使用 0.0（由任务内部执行 5~10 秒随机分类时间拟真等待）
+            effective_interval = cli_interval
+        else:
+            effective_interval = float(task_interval)
+
+        kwargs["battles"] = effective_battles
+        kwargs["run_options"] = RunOptions(
+            battles=effective_battles,
+            max_battles=100,
+            interval_seconds=effective_interval,
+        )
+        if task.name == "battle_yimo" and "daily_only" in params and params["daily_only"] is not None:
+            kwargs["daily_only"] = bool(params["daily_only"])
+
+    if getattr(task_class, "accepts_run_options", False) and "run_options" not in kwargs:
         kwargs["run_options"] = context.run_options
 
     return kwargs
@@ -842,13 +946,26 @@ def run_tasks(
         (task, resolve_task_class(task.name)) for task in request.tasks
     ]
 
+    # ★ 2026-10-17（方向 A）：「当天第一次真正开始执行批次」时补发一次
+    #   「登录签到（每日+活动）」33055（幂等、每自然日每角色一次）。
+    #   触发条件与理由见 :func:`_settle_login_signin` 与
+    #   ``notes/login_signin_run_trigger_plan.md``。
+    _settle_login_signin(context, request, emit)
+
     # ② 凭据（若有）只在本次运行期间存在；DEBUG 级别同理，都在 with 退出时恢复
     with _temporary_credentials(request.credentials), _temporary_log_level(request.verbose):
-        for task, task_class in resolved:
+        for index, (task, task_class) in enumerate(resolved):
             # ★ 2026-10-04：**任务边界**是取消的最主要检查点。
             # 用户点「停止执行」之后，至多再跑完手上的这一个任务就会停下 ——
             # 一个任务通常只是一两个请求，这点延迟用户察觉不到。
             cancellation.raise_if_cancelled()
+            if index > 0 and not request.dry_run and config.BATCH_TASK_INTERVAL_MAX > 0:
+                cancellation.sleep_interruptible(
+                    random.uniform(
+                        config.BATCH_TASK_INTERVAL_MIN,
+                        config.BATCH_TASK_INTERVAL_MAX,
+                    )
+                )
             try:
                 step = _run_single(
                     context,
@@ -888,6 +1005,52 @@ def run_tasks(
     active_report.spend_policy = context.spend_policy
     active_report.notes = list(context.notes)
     return active_report
+
+
+def _settle_login_signin(
+    context: RunContext,
+    request: RunRequest,
+    emit: NoteSink | None,
+) -> None:
+    """★ 2026-10-17（方向 A）：批次开始前补发一次「登录签到（每日+活动）」33055。
+
+    【为什么在这里】登录签到原来只挂"登录动作"两处（``tasks/login.py`` /
+    ``webapi/app.py`` 的直连分支），而会话持久化后的日常**根本不经过登录页**
+    ⇒ 钩子从没机会执行（根因：``notes/login_signin_trigger_gap.md``）。
+    本函数把"当天第一次真正开始执行批次"补成触发点，覆盖 Web 排队批 / CLI / 安卓。
+
+    【触发条件（都在这里短掉；完整语义见 ``notes/login_signin_run_trigger_plan.md``）】
+    * ``request.settle_login_signin`` 为真 —— 只有真实入口置位（默认关 ⇒ 测试与
+      被直接构造的请求零副作用）；
+    * **演练模式不触发** —— 守住"dry-run = 零网络流量"的既有契约；
+    * **批内含 ``login`` 任务时不触发** —— 该批登录成功后由登录侧钩子负责发，
+      免得先拿旧令牌白发一次；
+    * 没有会话直接跳过（钩子自己也会认，这里省一次调用）。
+
+    【为什么还要再包一层 try/except】钩子契约是"绝不向调用方抛异常"，但它现在
+    跑在**每次批次启动**上、爆炸半径比"登录时"大得多 —— 双保险，异常只记一条
+    warning，绝不影响本次运行。
+    """
+    if not request.settle_login_signin or request.dry_run:
+        return
+    if any(task.name == "login" for task in request.tasks):
+        return
+    # 防御式取会话：测试里存在"最小上下文替身"（不带 session_state 属性）。
+    state = getattr(context, "session_state", None)
+    if state is None:
+        return
+
+    # 局部导入：与 :func:`_recover_kicked_session` 同一风格（模块导入保持轻量；
+    # 也让测试可以 monkeypatch ``tasks.login_signin.run_if_first_login_today`` 捕捉调用）。
+    from tasks.login_signin import run_if_first_login_today
+
+    try:
+        run_if_first_login_today(
+            state,
+            emit=(lambda text: _note(context, text, emit)) if emit is not None else None,
+        )
+    except Exception as exc:  # noqa: BLE001 —— 见 docstring 的"双保险"
+        _LOGGER.warning("登录签到（每日+活动）触发异常（不影响本次运行）：%s", exc)
 
 
 def _recover_kicked_session(context: RunContext, *, emit: NoteSink | None) -> bool:
@@ -960,7 +1123,16 @@ def _run_single(
     if task.name == "bbq_energy":
         _note(context, _bbq_mode_note(kwargs, context.spend_policy), emit)
     if "run_options" in kwargs:
-        _note(context, f"运行参数：{context.run_options.describe()}", emit)
+        if task.name == "wudou_pvp_battle":
+            opt: RunOptions = kwargs["run_options"]
+            desc = (
+                f"打完所有剩余次数（间隔 {opt.interval_seconds:g}s）"
+                if opt.battles <= 0
+                else f"计划打 {opt.battles} 场（间隔 {opt.interval_seconds:g}s）"
+            )
+            _note(context, f"运行参数：{desc}", emit)
+        else:
+            _note(context, f"运行参数：{kwargs['run_options'].describe()}", emit)
 
     started = time.perf_counter()
     task_instance = create_task(task.name, context.session, **kwargs)

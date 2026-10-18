@@ -40,7 +40,13 @@ from client.exceptions import CherrytaleError
 from client.game_client import GameClient
 from client.session import GameSession
 from client.spending import SpendPolicy
-from models.game_config import RoleIdMap, load_role_id_map
+from models.game_config import (
+    RoleAttributes,
+    RoleIdMap,
+    is_ssr,
+    load_role_attributes,
+    load_role_id_map,
+)
 from models.role import (
     ALLOWED_PACKET_IDS,
     FORBIDDEN_PACKET_IDS,
@@ -135,6 +141,27 @@ class RolesTask(BaseTask):
             )
             return None
 
+    def _load_role_attributes(self) -> dict[int, RoleAttributes] | None:
+        """读角色属性表（判 SSR 用）。
+
+        :return: ``{roleMainID: RoleAttributes}``；读不到返回 ``None`` —— 同样
+            **不阻断任务**：名册照常返回，只是每条 ``is_ssr`` 记 ``None``
+            （判不出来），由接口层决定怎么展示。绝不能因为"判不出稀有度"
+            就把角色当成"非 SSR"删掉 —— 那是静默丢数据。
+
+        【为什么读四张表】``load_role_attributes`` 还要经 ``DataRelative``
+        把元素/资质/职业/种族对齐；本任务只用到 ``qualification_print``，
+        但那是同一个函数的产物，不另造一条只读两张表的捷径（两份口径迟早漂）。
+        """
+        try:
+            return load_role_attributes()
+        except (OSError, ValueError) as exc:
+            self.logger.warning(
+                "读不到角色属性表（RoleQualificationData 等），本次不判定 SSR：%s",
+                exc,
+            )
+            return None
+
     # ------------------------------------------------------------------
     # 主流程
     # ------------------------------------------------------------------
@@ -187,7 +214,9 @@ class RolesTask(BaseTask):
                     },
                 )
 
-        roles = self._describe(snapshot, self._load_role_ids())
+        role_ids = self._load_role_ids()
+        attributes = self._load_role_attributes()
+        roles = self._describe(snapshot, role_ids, attributes)
         label = _SOURCE_LABEL[source]
         message = f"角色 {len(roles)} 个（来源：{label}）"
         if fallback_reason:
@@ -202,6 +231,10 @@ class RolesTask(BaseTask):
                 "fallback_reason": fallback_reason,
                 "role_count": len(roles),
                 "roles": roles,
+                # ★ 2026-10-18：稀有度到底判没判 —— 属性表读不到时是 False。
+                # 接口层据此把「我的角色」标成"未过滤"（fail-open），
+                # 而不是把判不出来的角色当非 SSR 静默删掉。
+                "rarity_available": attributes is not None,
                 "sent_packets": tuple(self.sent_packet_ids),
             },
         )
@@ -210,11 +243,13 @@ class RolesTask(BaseTask):
         self,
         snapshot: tuple[dict[str, int], ...],
         role_ids: RoleIdMap | None,
+        attributes: dict[int, RoleAttributes] | None = None,
     ) -> tuple[dict[str, Any], ...]:
-        """把快照补上"配置表侧"的信息（中文名、RoleInfoID、头像），按等级降序输出。
+        """把快照补上"配置表侧"的信息（中文名、RoleInfoID、头像、SSR 标记），按等级降序。
 
         :param snapshot: :func:`models.session_state.role_snapshot_from` 的产物。
         :param role_ids: 换算表；``None`` 时名字留空、``role_info_id`` / ``icon_code`` 记空。
+        :param attributes: 角色属性表；``None`` 时 ``is_ssr`` 一律 ``None``（判不出来）。
         :return: 可直接 JSON 序列化的列表。
 
         .. note::
@@ -227,12 +262,21 @@ class RolesTask(BaseTask):
            ``assets/avatars/{icon_code}.png``。它是**查文件存在性换来的**，不是协议
            字段；查不到时给空串，让前端回退统一占位图 —— 这里**绝不给假路径**
            （见 ``services/avatar_service.py::resolve_role_icon_code``）。
+
+        .. note::
+           **★ 2026-10-18：``is_ssr`` 三态**（``True`` / ``False`` / ``None``）。
+           ``None`` 专指"判不出来"（属性表缺失，或该 roleID 不在属性表里），
+           与 ``False``（确定不是 SSR）**严格区分**：面板只展示 SSR，但接口层
+           对 ``None`` 采取 fail-open（保留 + 标注未过滤），否则一次配置表读取
+           失败就会让整块角色列表凭空消失。判定口径复用
+           :func:`models.game_config.is_ssr`（``qualificationPrint ≥ 23``）。
         """
         described: list[dict[str, Any]] = []
         for entry in snapshot:
             main_id = int(entry.get("roleID", 0))
             info_ids = role_ids.role_info_ids(main_id) if role_ids else ()
             info_id = info_ids[0] if info_ids else 0
+            attribute = attributes.get(main_id) if attributes else None
             described.append(
                 {
                     "role_sid": int(entry.get("roleSid", 0)),
@@ -242,6 +286,11 @@ class RolesTask(BaseTask):
                     "star": int(entry.get("roleStar", 0)),
                     "name": role_ids.name_of(main_id) if role_ids else "",
                     "icon_code": resolve_role_icon_code(main_id) if role_ids else "",
+                    "is_ssr": (
+                        is_ssr(attribute.qualification_print)
+                        if attribute is not None
+                        else None
+                    ),
                 }
             )
         # 等级降序（同级按星级、再按 sid）—— 与挖矿挑角色的"从高到低"口径一致，

@@ -136,7 +136,7 @@ class TestDecoding:
         assert res.isSkipBattle is False
         assert res.classRankClassList == []
         assert res.my_rank() is None
-        assert "已购次数" in res.summary()
+        assert "今日已购 0 次" in res.summary()
 
     def test_challenge_res_parses_replay_summary(self) -> None:
         """39008 的战报是 46KB JSON —— 只取几个键，且要能拿到胜负。"""
@@ -153,7 +153,7 @@ class TestDecoding:
         assert summary["replay_file_name"] == "A_B"
         # 大字段不该被带进摘要（避免日志被 46KB 撑爆）
         assert "big" not in summary
-        assert "本场=胜" in res.summary()
+        assert "本场胜" in res.summary()
 
     def test_broken_replay_json_does_not_raise(self) -> None:
         """战报解不动只是"展示信息缺失"，绝不能把整场判成失败。"""
@@ -161,7 +161,7 @@ class TestDecoding:
             encode_int(1, 0) + encode_string(6, "{不是合法 JSON")
         )
         assert res.battle_summary() == {}
-        assert "本场=未知" in res.summary()
+        assert "本场未知" in res.summary()
 
 
 # ---------------------------------------------------------------------------

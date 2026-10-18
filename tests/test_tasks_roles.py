@@ -129,6 +129,34 @@ def patch_role_id_map(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(tasks.roles, "load_role_id_map", lambda *a, **k: role_map)
 
 
+def patch_role_attributes(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    qualification_print: dict[int, int] | None = None,
+) -> None:
+    """装一份内存属性表（判 SSR 用），**不读真实 TextAsset**。
+
+    默认口径（与真实配置表同构）：庫爾蒂絲 ``qualificationPrint=23`` → **SSR**，
+    將臣 ``22`` → **SR**（22 = Role_Rarity_3 = SR，见
+    ``notes/role_ssr_filter_plan.md`` §二）。两个角色正好覆盖"留一个、排一个"
+    两条分支。
+
+    ⚠️ 与 :func:`patch_role_id_map` 同理必须 patch：读真表的话，"谁是 SSR"
+    会随游戏版本变，用例就变成了在测试配置表内容。
+    """
+    from models.game_config import RoleAttributes
+
+    mapping = qualification_print or {
+        ROLE_MAIN_KURTIS: 23,
+        ROLE_MAIN_ZHANGCHEN: 22,
+    }
+    table = {
+        main_id: RoleAttributes(role_main_id=main_id, qualification_print=value)
+        for main_id, value in mapping.items()
+    }
+    monkeypatch.setattr(tasks.roles, "load_role_attributes", lambda *a, **k: table)
+
+
 def create_role_id_map_from_real_tables():
     """读**真实**配置表建换算表；缺素材返回 ``None``（调用方自行 Skip）。
 
@@ -155,6 +183,7 @@ class TestLiveRoster:
     @pytest.fixture(autouse=True)
     def _role_map(self, monkeypatch: pytest.MonkeyPatch) -> None:
         patch_role_id_map(monkeypatch)
+        patch_role_attributes(monkeypatch)
 
     def test_uses_live_roster_when_available(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """5011 有数据 → 用实时名册，且**不碰**会话快照。"""
@@ -202,6 +231,12 @@ class TestLiveRoster:
             "load_role_id_map",
             lambda *a, **k: (_ for _ in ()).throw(OSError("表不在")),
         )
+        # 属性表同样读不到 → 稀有度判不出来（见下面的 is_ssr 断言）
+        monkeypatch.setattr(
+            tasks.roles,
+            "load_role_attributes",
+            lambda *a, **k: (_ for _ in ()).throw(OSError("表不在")),
+        )
         patch_transport(
             monkeypatch, roster=roster_payload([role_bytes(701, ROLE_MAIN_KURTIS, 50)])
         )
@@ -212,6 +247,81 @@ class TestLiveRoster:
         assert result.data["roles"][0]["name"] == "", "没配置表就别编名字"
         assert result.data["roles"][0]["role_sid"] == 701, "ID 数据不依赖配置表"
         assert result.data["roles"][0]["icon_code"] == "", "没换算表就别给假头像路径"
+        # ★ 2026-10-18：稀有度也判不出来 —— 记 None，绝不冒充"非 SSR"
+        assert result.data["rarity_available"] is False
+        assert result.data["roles"][0]["is_ssr"] is None
+
+    # ------------------------------------------------------------------
+    # SSR 标记（★ 2026-10-18：「我的角色」只展示 SSR 的数据侧）
+    # ------------------------------------------------------------------
+    def test_ssr_flag_comes_from_qualification_print(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``is_ssr`` 只认配置表 ``qualificationPrint ≥ 23``；**任务层不过滤**。
+
+        口径依据（``notes/role_ssr_filter_plan.md`` §二）：
+        ``DrawMachineChanceTitleData`` 里 ``Role_Rarity_4 = SSR``，
+        而 ``RoleQualificationData`` 里 ``print=23 → Role_Rarity_4`` ——
+        与 ``daily_task_auto`` 挑"最低等级 SSR"用的是同一个 ``is_ssr()``。
+        """
+        patch_transport(
+            monkeypatch,
+            roster=roster_payload(
+                [
+                    role_bytes(701, ROLE_MAIN_KURTIS, 50),  # print=23 → SSR
+                    role_bytes(702, ROLE_MAIN_ZHANGCHEN, 42),  # print=22 → SR
+                ]
+            ),
+        )
+        result = create_task("roles", make_session()).run()
+
+        by_sid = {item["role_sid"]: item for item in result.data["roles"]}
+        assert by_sid[701]["is_ssr"] is True
+        assert by_sid[702]["is_ssr"] is False
+        assert result.data["rarity_available"] is True
+        assert result.data["role_count"] == 2, "任务层只打标记、不砍数据（过滤在接口层）"
+
+    def test_missing_attribute_table_marks_unknown_instead_of_dropping(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """属性表缺失 → 每条 ``is_ssr=None``（判不出来），**角色一个都不许少**。
+
+        守的是 fail-open 的数据侧：任务层一旦在这里过滤，接口层连
+        "这次该不该标未过滤"都无从判断 —— 面板会凭空变空。
+        """
+        monkeypatch.setattr(
+            tasks.roles,
+            "load_role_attributes",
+            lambda *a, **k: (_ for _ in ()).throw(OSError("表不在")),
+        )
+        patch_transport(
+            monkeypatch, roster=roster_payload([role_bytes(701, ROLE_MAIN_KURTIS, 50)])
+        )
+        result = create_task("roles", make_session()).run()
+
+        assert result.ok is True
+        assert result.data["rarity_available"] is False
+        assert result.data["role_count"] == 1
+        assert result.data["roles"][0]["is_ssr"] is None, "判不出来 ≠ 不是 SSR"
+
+    def test_role_missing_from_attribute_table_is_unknown(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """属性表读到了、但里面没这个 roleID（新角色早于配置表更新）→ ``None``。
+
+        与"整张表读不到"是**两条不同的路**，但对外都必须是"不知道"而不是 False。
+        """
+        patch_role_attributes(
+            monkeypatch, qualification_print={ROLE_MAIN_ZHANGCHEN: 22}
+        )
+        patch_transport(
+            monkeypatch, roster=roster_payload([role_bytes(701, ROLE_MAIN_KURTIS, 50)])
+        )
+        result = create_task("roles", make_session()).run()
+
+        assert result.data["rarity_available"] is True
+        assert result.data["roles"][0]["is_ssr"] is None
+        assert result.data["role_count"] == 1, "未收录不等于排除"
 
     def test_icon_code_is_a_real_filename(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path
@@ -254,6 +364,7 @@ class TestSnapshotFallback:
     @pytest.fixture(autouse=True)
     def _role_map(self, monkeypatch: pytest.MonkeyPatch) -> None:
         patch_role_id_map(monkeypatch)
+        patch_role_attributes(monkeypatch)
 
     def test_empty_live_falls_back_to_snapshot(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """服务端回了空名册（有子包但无 roleList）→ 用登录快照，并说明原因。"""

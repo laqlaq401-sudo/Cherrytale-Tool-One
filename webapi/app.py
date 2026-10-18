@@ -43,13 +43,14 @@ from services import (
     selection_state,
     spend_state,
     task_spec,
+    ui_prefs,
 )
 from webapi import logstream, state
 
 _LOGGER: Final[logging.Logger] = logging.getLogger("webapi.app")
 
 #: 应用版本（双端页面页脚显示）。
-APP_VERSION: Final[str] = "1.0.0"
+APP_VERSION: Final[str] = "1.1.0"
 
 #: 默认端口（PC 端默认 8765；Android 端固定指向 8000）。
 DEFAULT_PORT: Final[int] = 8000
@@ -309,6 +310,40 @@ class SelectionPayload(BaseModel):
     )
 
 
+class StopPayload(BaseModel):
+    """中断请求体（★ 2026-10-16 起可选）。
+
+    :param run_id: 只撤**指定的一批**：在跑就中断、还在排队就摘出队列、
+        已跑完则回一句"这一批已经结束了"。
+
+    【为什么字段是可选的、而且整段 body 也可以不带】
+    这是给"主动任务一键执行"用的精确停止 —— 那批可能还在排队，而老
+    ``stop()`` 只会停"正在跑的那一批"（可能是别人的），会停错对象。
+    但**旧前端 / 卡片上的「执行」按钮**是 ``POST /api/stop`` **空 body**，
+    语义是"停手上的这一件"；路由层对空 body 会喂一个 ``{}``
+    （见 ``_route`` 里的 ``json.loads(body) if body.strip() else {}``），
+    所以不传 = ``run_id=None`` = 老行为，双向兼容。
+    """
+
+    run_id: str | None = Field(
+        default=None, description="要撤销的批次编号；不传 = 停当前正在跑的那一批"
+    )
+
+
+class UIPrefsPayload(BaseModel):
+    """界面偏好（展开着哪些主动任务卡片）的保存请求体（★ 2026-10-16，全量提交）。
+
+    :param expanded: 当前展开着的主动任务名。服务端按 ``task_spec.TASK_SPECS``
+        白名单过滤（未知任务名 / 非主动任务 / 已隐藏任务一律丢弃），
+        所以前端传多传错都不会把脏数据攒进状态文件。
+    """
+
+    expanded: list[str] = Field(
+        default_factory=list,
+        description="展开着的主动任务名；未登记的任务名在写盘前被白名单丢弃",
+    )
+
+
 class ApiError(Exception):
     """统一业务异常：对应特定的 HTTP 状态码与 detail。"""
 
@@ -400,8 +435,16 @@ class WebApp:
             "game_day": daily_reset.game_day(),
             "next_daily_reset": daily_reset.format_reset(),
             "auto_done": list(daily_state.completed_names()),
+            # ★ 2026-10-16：「一键执行」的成员顺序（**已排好序**）。
+            # 顺序规则（宴席第一、其余按声明顺序）只在服务端实现一次
+            # （``task_spec.batch_tasks()``），前端照着用即可 —— 让它自己
+            # 按 batch_order 再排一遍就等于同一套规则写两处，迟早不一致。
+            # 每个任务自己的 ``batch_eligible``（见 describe_tasks）只用来
+            # 决定"这张卡画不画勾选框"。
+            "batch_tasks": list(task_spec.batch_tasks()),
             # ★ 2026-10-05：宴席"早/晚哪顿吃过了"的服务端记账（与 auto_done 无关）。
-            # 前端据 ``meals`` 把对应按钮置灰。换日点 06:00，与游戏日 05:00 独立。
+            # 前端据 ``meals`` 把对应按钮置灰。换日点 06:10（BANQUET_RESET_*），
+            # 与游戏日 05:00 独立。
             "banquet": banquet_state.describe(),
             "spend": {
                 "config_allow_diamond": config.ALLOW_DIAMOND_SPEND,
@@ -416,6 +459,9 @@ class WebApp:
             # 还原勾选框与参数框（localStorage 在 EXE 的 Edge --app 壳里不可靠）。
             # saved_updated_at 为空串 = 服务端从未存过（前端保留 localStorage 兜底）。
             "selection": selection_state.describe(),
+            # ★ 2026-10-16：主动任务卡片的展开状态（界面偏好）也服务端记账。
+            # 与 selection/spend 放在同一处：首屏装配一次拿全，省一次请求。
+            "ui_prefs": ui_prefs.describe(),
         }
 
     def accounts(self) -> dict[str, Any]:
@@ -772,11 +818,12 @@ class WebApp:
             runner.TaskRequest(name="yimo_status"),
         ]
         if full:
-            read_tasks.append(
-                runner.TaskRequest(
-                    name="top_pvp_battle", params={"battles": 0, "interval": 0}
-                )
-            )
+            # ★ 2026-10-18：改用**只读**的 top_pvp_status。
+            # 以前这里跑 top_pvp_battle + battles=0（那时 0 = 只读）。
+            # 现在 0 的含义改成了"打到次数用完"（用户要求与其它战斗任务对齐），
+            # 信息面板再复用战斗任务就会**真的开打** —— 所以换成只发 39001、
+            # 白名单里连 39007 都没有的专用只读任务。
+            read_tasks.append(runner.TaskRequest(name="top_pvp_status"))
         request = runner.RunRequest(tasks=tuple(read_tasks))
         try:
             report = self.manager.run_inline(request)
@@ -795,9 +842,19 @@ class WebApp:
         arena = data_of("arena_status")
         wudou = data_of("wudou_status")
         yimo = data_of("yimo_status")
-        top_pvp = data_of("top_pvp_battle")
+        top_pvp = data_of("top_pvp_status")
 
         session_info = _masked_session()
+        # ★ 2026-10-18：「我的角色」只展示 SSR（用户要求：SR / R 排除）。
+        #   过滤放在**接口层**而不是 tasks 层 —— ``roles`` 任务的本职是"读全量名册"
+        #   （CLI 也能单跑 ``run roles``），"给界面看什么"是展示口径，属于这里。
+        role_items = list(roles.get("roles") or ())
+        #: 判定条件写 ``is not False`` 而不是 ``is True``：``None`` = 判不出来
+        #: （属性表缺失 / 该 roleID 未收录）→ fail-open 保留，并由
+        #: ``rarity_filter`` 告知界面"这次没过滤"，绝不静默把角色删掉。
+        ssr_role_items = [
+            item for item in role_items if item.get("is_ssr") is not False
+        ]
         return {
             "ok": True,
             "session": session_info,
@@ -815,14 +872,25 @@ class WebApp:
                 "item_count": wallet.get("item_count"),
             },
             "roles": {
-                "count": roles.get("role_count", 0),
+                #: 「我的角色」展示口径 = **只含 SSR**（2026-10-18 用户要求）。
+                #: ``count`` 与 ``items`` 恒等（都是 SSR 条数），不另算一个数
+                #: —— 两个数一旦分头计算，界面与列表迟早对不上。
+                "count": len(ssr_role_items),
+                #: 全量名册条数（含 SR / R）。只在**空态**里用得上：
+                #: "没有 SSR 角色（共 N 个角色）"要说得清是全空还是被过滤空了。
+                "total_count": len(role_items),
+                #: ``"ok"`` = 稀有度判定正常；``"unavailable"`` = 属性表没读到，
+                #: 本次**没有过滤**（fail-open 全量透出），界面必须明示。
+                "rarity_filter": (
+                    "unavailable" if roles.get("rarity_available") is False else "ok"
+                ),
                 #: "live"（实时名册 5012）/ "snapshot"（登录 1004 快照）
                 "source": roles.get("source", ""),
                 "fallback_reason": roles.get("fallback_reason", ""),
-                #: ``[{role_sid, role_id, role_info_id, level, star, name, icon_code}, …]``
+                #: ``[{role_sid, role_id, role_info_id, level, star, name, icon_code, is_ssr}, …]``
                 #: ``icon_code`` 是静态头像目录的文件名（如 ``a001_03h``），前端拼
                 #: ``assets/avatars/{icon_code}.png``；为空串时前端回退统一占位图。
-                "items": list(roles.get("roles") or ()),
+                "items": ssr_role_items,
             },
             "arena": {
                 "challenge_count": arena.get("challenge_count"),
@@ -1058,6 +1126,19 @@ class WebApp:
             "updated_at": saved["updated_at"],
         }
 
+    def save_ui_prefs(self, payload: UIPrefsPayload) -> dict[str, Any]:
+        """保存界面偏好（展开着哪些主动任务卡片）。
+
+        ★ 2026-10-16：展开状态原来只在前端内存里，刷新页面一律折叠。现在它跟
+        selection 一样服务端权威、localStorage 兜底 —— 理由见
+        ``services/ui_prefs.py`` 的模块文档（EXE 壳的浏览器存储不可靠）。
+        """
+        saved = ui_prefs.set_expanded(payload.expanded)
+        return {
+            "expanded": saved["expanded"],
+            "updated_at": saved["updated_at"],
+        }
+
     def run_status(self) -> dict[str, Any]:
         """运行状态。"""
         return self.manager.status()
@@ -1076,9 +1157,13 @@ class WebApp:
             "lines": [line.to_dict() for line in sent],
         }
 
-    def stop_run(self) -> dict[str, Any]:
-        """停止运行。"""
-        result = self.manager.stop()
+    def stop_run(self, payload: StopPayload | None = None) -> dict[str, Any]:
+        """停止运行。
+
+        :param payload: 可选。带了 ``run_id`` 就只撤那一批（见 :class:`StopPayload`）；
+            ``None``（空 body）沿用老语义"停当前正在跑的那一批"。
+        """
+        result = self.manager.stop(run_id=payload.run_id if payload else None)
         result["ok"] = result.get("stopped", False)
         return result
 
@@ -1181,7 +1266,7 @@ li {{ margin: 8px 0; }}
   <li><code>GET  /api/logs</code> - 日志流游标增量轮询</li>
   <li><code>POST /api/logs/save</code> - 保存开发者日志至本地磁盘</li>
   <li><code>POST /api/logs/open_folder</code> - 打开日志存放目录</li>
-  <li><code>POST /api/stop</code> - 协作式中断当前与排队任务</li>
+  <li><code>POST /api/stop</code> - 协作式中断当前批次；带 <code>{{"run_id": "..."}}</code> 时只撤指定的一批（在跑则中断，排队则移出队列）</li>
 </ul>
 </body></html>"""
         return 200, html, "text/html; charset=utf-8"
@@ -1219,6 +1304,12 @@ def _route(
         "/api/logs/save": SaveLogsPayload,
         "/api/spend": SpendPayload,
         "/api/selection": SelectionPayload,
+        # ★ 2026-10-16：卡片展开状态（界面偏好）的服务端持久化
+        "/api/ui_prefs": UIPrefsPayload,
+        # ★ 2026-10-16：/api/stop 原来不收 body（"停手上的这一件"）。
+        # 现在登记成可选 body —— 空 body 仍然被喂成 {}（见下面的解析），
+        # 所以旧前端与新前端都能用同一个端点。
+        "/api/stop": StopPayload,
     }
 
     if method == "GET":
@@ -1261,14 +1352,16 @@ def _route(
                 return 200, app.set_spend(payload)
             if path == "/api/selection":
                 return 200, app.save_selection(payload)
+            if path == "/api/ui_prefs":
+                return 200, app.save_ui_prefs(payload)
             if path == "/api/login/servers":
                 return 200, app.login_servers(payload)
             if path == "/api/login/enter":
                 return 200, app.login_enter(payload)
             if path == "/api/logs/save":
                 return 200, app.save_logs(payload)
-        if path == "/api/stop":
-            return 200, app.stop_run()
+            if path == "/api/stop":
+                return 200, app.stop_run(payload)
         if path == "/api/logs/open_folder":
             return 200, app.open_log_folder()
 

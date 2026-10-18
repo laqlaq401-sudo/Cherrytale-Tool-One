@@ -27,6 +27,12 @@ from services import runner
 from services.task_spec import normalize_params
 
 
+@pytest.fixture(autouse=True)
+def _zero_batch_interval(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(config, "BATCH_TASK_INTERVAL_MIN", 0.0)
+    monkeypatch.setattr(config, "BATCH_TASK_INTERVAL_MAX", 0.0)
+
+
 @pytest.fixture()
 def no_session(monkeypatch: pytest.MonkeyPatch) -> None:
     """把"会话状态来源"固定成"没有"。
@@ -238,6 +244,54 @@ class TestTaskKwargs:
         assert kwargs["delay_min"] == 10.0
         assert kwargs["delay_max"] == 20.0
 
+    def test_wudou_pvp_battle_kwargs(self, context: runner.RunContext) -> None:
+        """测试 wudou_pvp_battle 任务参数与选人策略映射到 kwargs。"""
+        kwargs = _kwargs(
+            context,
+            "wudou_pvp_battle",
+            {
+                "strategy": "npc_first",
+                "battles": 3,
+            },
+        )
+        assert kwargs["strategy"] == "npc_first"
+        assert kwargs["run_options"].battles == 3
+        # 战斗时间间隔已严格由分类时间拟真执行（5~10 秒随机等待），interval_seconds 为 0.0
+        assert kwargs["run_options"].interval_seconds == 0.0
+        assert kwargs["run_options"].max_battles == config.WUDOU_PVP_MAX_BATTLES
+
+    def test_battle_arena_kwargs(self, context: runner.RunContext) -> None:
+        """测试 battle_arena 任务参数映射到 kwargs。"""
+        kwargs = _kwargs(
+            context,
+            "battle_arena",
+            {
+                "battles": 5,
+            },
+        )
+        assert kwargs["run_options"].battles == 5
+        # 间隔由任务内部分类时间拟真执行（5~10 秒随机等待）
+        assert kwargs["run_options"].interval_seconds == 0.0
+
+    def test_battle_experiment_kwargs(self, context: runner.RunContext) -> None:
+        """测试 battle_experiment 任务 kwargs 正常构造。"""
+        kwargs = _kwargs(context, "battle_experiment")
+        assert kwargs["dry_run"] is True
+        assert kwargs["spend_policy"] is context.spend_policy
+
+    def test_battle_yimo_kwargs(self, context: runner.RunContext) -> None:
+        """测试 battle_yimo 任务参数映射到 kwargs。"""
+        kwargs = _kwargs(
+            context,
+            "battle_yimo",
+            {
+                "battles": 2,
+            },
+        )
+        assert kwargs["run_options"].battles == 2
+        # 间隔由任务内部分类时间拟真执行（5~10 秒随机等待）
+        assert kwargs["run_options"].interval_seconds == 0.0
+
     def test_wrong_kwarg_name_is_not_silently_ignored(self, context: runner.RunContext) -> None:
         """说明"点名式"的价值：名字写错会立刻 TypeError，而不是静默忽略。
 
@@ -330,16 +384,16 @@ class TestPrepare:
             ctx.close()
 
     def test_explicit_battles_override_config(self, no_session: None) -> None:
-        """场数 / 间隔由**任务参数**给出（★ 2026-09-25 归位后不再走运行级字段）。
+        """场数由任务参数给出（★ 2026-09-25 归位后不再走运行级字段）。
 
-        网页上填的就是这两个值，所以测试也照 UI 的路径来提交 ——
-        顺带保证"字符串形式的场数"（``<input type="number">`` 交上来的样子）
-        也会被正确转换：``"5"`` 与 ``"0.25"`` 都必须生效。
+        网页上填的就是场数值，测试也照 UI 的路径来提交 ——
+        保证"字符串形式的场数"（``<input type="number">`` 交上来的样子）
+        会被正确转换成整数，且间隔自动采用内建分类时间拟真（0.0）。
         """
         request = runner.RunRequest(
             tasks=(
                 runner.TaskRequest(
-                    "top_pvp_battle", params={"battles": "5", "interval": "0.25"}
+                    "top_pvp_battle", params={"battles": "5"}
                 ),
             )
         )
@@ -347,7 +401,7 @@ class TestPrepare:
         try:
             assert ctx.run_options.battles == 5
             assert ctx.run_options.effective_battles <= 5
-            assert ctx.run_options.interval_seconds == 0.25
+            assert ctx.run_options.interval_seconds == 0.0
         finally:
             ctx.close()
 

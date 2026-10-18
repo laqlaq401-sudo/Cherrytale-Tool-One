@@ -99,10 +99,6 @@ _WINDOW_CONTROLS_JS: Final[str] = """
         btn.innerHTML = isMax ? ICONS.restore : ICONS.max;
         btn.title = isMax ? "还原" : "最大化";
         btn.setAttribute("aria-label", btn.title);
-        document.documentElement.classList.add("win-maximizing-transition");
-        setTimeout(() => {
-          document.documentElement.classList.remove("win-maximizing-transition");
-        }, 260);
       } else if (type === "close") {
         document.documentElement.classList.add("win-closing");
       }
@@ -116,7 +112,7 @@ _WINDOW_CONTROLS_JS: Final[str] = """
         return false;
       };
 
-      const delay = type === "min" ? 180 : type === "close" ? 150 : 0;
+      const delay = type === "min" ? 140 : type === "close" ? 120 : 0;
       setTimeout(() => {
         if (invoke()) return;
 
@@ -139,7 +135,7 @@ _WINDOW_CONTROLS_JS: Final[str] = """
       document.documentElement.classList.add("win-restoring");
       setTimeout(() => {
         document.documentElement.classList.remove("win-restoring");
-      }, 250);
+      }, 180);
     }
   });
 
@@ -154,7 +150,7 @@ _WINDOW_CONTROLS_JS: Final[str] = """
     dock.appendChild(box);
   } else {
     box.style.cssText =
-      "position:fixed;top:8px;right:10px;z-index:99;display:flex;gap:10px;align-items:center;";
+      "position:fixed;top:8px;right:10px;z-index:99;display:flex;gap:14px;align-items:center;";
     document.body.appendChild(box);
   }
 
@@ -338,10 +334,13 @@ class ServerThread:
         self._thread.start()
 
     def stop(self) -> None:
-        """请求退出并等线程结束（最多 15 秒）。"""
-        self._server.shutdown()
-        self._server.server_close()
-        self._thread.join(timeout=15)
+        """请求退出并等线程结束。"""
+        try:
+            self._server.shutdown()
+            self._server.server_close()
+        except Exception as exc:
+            _LOGGER.warning("关闭 HTTP 服务异常：%s", exc)
+        self._thread.join(timeout=2.0)
 
 
 class DesktopChrome:
@@ -446,35 +445,36 @@ class DesktopChrome:
             )
             self._maximized = True
 
-        threading.Thread(
-            target=self._animate_bounds_transition,
-            args=(cur_bounds, target_bounds),
-            daemon=True,
-        ).start()
+        self._apply_bounds(target_bounds)
+
+    def _apply_bounds(self, bounds: tuple[int, int, int, int]) -> None:
+        """一步原子化应用窗口边界，消除多帧低帧率跳变与撕裂。"""
+        if self._window is None:
+            return
+        x, y, w, h = bounds
+        try:
+            form = getattr(self._window, "native", None)
+            if form is not None and hasattr(form, "SetBounds"):
+                form.SetBounds(x, y, w, h)
+                return
+        except Exception:
+            pass
+
+        try:
+            self._window.move(x, y)
+            self._window.resize(w, h)
+        except Exception:
+            pass
 
     def _animate_bounds_transition(
         self,
         start_bounds: tuple[int, int, int, int],
         target_bounds: tuple[int, int, int, int],
-        duration: float = 0.16,
-        steps: int = 10,
+        duration: float = 0.0,
+        steps: int = 1,
     ) -> None:
-        """多帧平滑缓动插值，实现窗口从普通尺寸到最大化（及还原）的平滑过渡。"""
-        dt = duration / steps
-        for i in range(1, steps + 1):
-            progress = i / steps
-            ease = 1.0 - (1.0 - progress) ** 3
-            cur_l = int(start_bounds[0] + (target_bounds[0] - start_bounds[0]) * ease)
-            cur_t = int(start_bounds[1] + (target_bounds[1] - start_bounds[1]) * ease)
-            cur_w = int(start_bounds[2] + (target_bounds[2] - start_bounds[2]) * ease)
-            cur_h = int(start_bounds[3] + (target_bounds[3] - start_bounds[3]) * ease)
-            try:
-                if self._window is not None:
-                    self._window.move(cur_l, cur_t)
-                    self._window.resize(cur_w, cur_h)
-            except Exception:
-                break
-            time.sleep(dt)
+        """向后兼容桩：直接一步切换到目标边界。"""
+        self._apply_bounds(target_bounds)
 
     def begin_edge_resize(self, edge: str) -> None:
         """边缘拖拽缩放入口（页面注入把手 mousedown 时调用，见 _WINDOW_CONTROLS_JS）。
@@ -886,11 +886,11 @@ def prepare_clr_runtime(*, platform: str | None = None) -> Path | None:
     return config_path
 
 
-def open_browser_window(url: str) -> bool:
+def open_browser_window(url: str) -> subprocess.Popen[Any] | None:
     """回退方案：用 Edge/Chrome 的 ``--app`` 模式开一个"像独立窗口"的浏览器。
 
     :param url: 要打开的地址。
-    :return: 是否成功唤起了浏览器。
+    :return: 成功拉起外部浏览器时返回 ``subprocess.Popen`` 对象；降级回默认浏览器返回 ``None``。
 
     【为什么选 ``--app``】
     它会开一个没有地址栏与标签栏的窗口，观感与独立窗口接近，而且**零新增依赖**
@@ -906,12 +906,12 @@ def open_browser_window(url: str) -> bool:
         if not Path(candidate).is_file():
             continue
         try:
-            subprocess.Popen(
+            proc = subprocess.Popen(
                 [
                     candidate,
                     f"--app={url}",
                     f"--window-size={WINDOW_WIDTH},{WINDOW_HEIGHT}",
-                    f"--user-data-dir={profile}",
+                    f"--user-data-dir={profile.resolve()}",
                     # 【为什么必须带这两个开关（2026-10-03 白窗口事故）】
                     # 这个 user-data-dir 是**本工具专用的全新 profile**，Edge 第一次
                     # 用它启动时会走"首次运行"流程：窗口先弹出来、内容却是白的
@@ -923,16 +923,26 @@ def open_browser_window(url: str) -> bool:
                     # 窗口应直接显示界面（见 notes/web_layer.md「§十二补 5」）。
                     "--no-first-run",
                     "--no-default-browser-check",
+                    # 【为什么必须禁用扩展与后台组件（2026-10-17 弹窗与膨胀事故）】
+                    # 新建 profile 时 Edge 默认会从系统主环境自动同步克隆用户扩展（油猴/
+                    # Adguard/B站助手等）；扩展首次加载触发 onInstalled 弹窗（欢迎页），
+                    # 且 Adguard 庞大规则库与插件文件会导致 tmp 瞬间膨胀 300+MB。
+                    # 以下开关彻底切断插件加载、后台网络拉取与自启：
+                    "--disable-extensions",
+                    "--disable-component-extensions-with-background-pages",
+                    "--disable-background-networking",
+                    "--no-service-autorun",
                 ],
                 close_fds=True,
             )
+            return proc
         except OSError as exc:  # pragma: no cover - 极少见（权限/被杀软拦截）
             _LOGGER.warning("调用 %s 失败：%s", candidate, exc)
             continue
-        return True
 
     # 一个都没找到：退回默认浏览器（会带地址栏，但至少能打开）
-    return webbrowser.open(url)
+    webbrowser.open(url)
+    return None
 
 
 def run_window(url: str, *, frameless: bool, title: str = "米娅小助手") -> None:
@@ -1026,6 +1036,29 @@ def wait_until_stopped(server: ServerThread) -> None:
         time.sleep(0.5)
 
 
+def wait_browser_or_stopped(proc: subprocess.Popen[Any] | None, server: ServerThread) -> None:
+    """阻塞等待外部独立窗口或服务结束。
+
+    【为什么必须轮询 proc.poll()（2026-10-17 解决后台僵尸进程）】
+    若回退到 Edge/Chrome --app 模式，旧实现直接进入 wait_until_stopped(server)，
+    而 server 是后台线程，除非外部触发或 Ctrl+C（打包版 console=False 根本按不了），
+    否则永远不会退出。结果是用户在界面点击红叉关闭浏览器窗口后，CherrytaleTool.exe 
+    仍然长久挂在后台占用端口与资源。
+    这里检测到 proc 退出（用户点击 X 关闭窗口）即主动跳出循环，触发 finally 关停服务并彻底自毁退出。
+    """
+    if proc is not None:
+        try:
+            while server.is_alive:
+                if proc.poll() is not None:
+                    _LOGGER.info("检测到外部窗口已关闭（退出码 %s），退出程序", proc.poll())
+                    break
+                time.sleep(0.3)
+        except KeyboardInterrupt:
+            pass
+    else:
+        wait_until_stopped(server)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """程序主入口。
 
@@ -1090,9 +1123,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "提示：未安装 pywebview，改用 Edge/Chrome 的 --app 模式开独立窗口。\n"
                     "     想用原生窗口：python -m pip install pywebview==6.2.1"
                 )
-                if not open_browser_window(url):
+                proc = open_browser_window(url)
+                if proc is None:
                     print(f"✘ 也没能唤起浏览器，请手动打开：{url}")
-                wait_until_stopped(server)
+                wait_browser_or_stopped(proc, server)
             except Exception as exc:
                 # 【为什么 catch 到 Exception（2026-10-03）】pywebview 的 Windows 后端
                 # 在初始化期可能抛出三种长相不同的异常：pythonnet 的 RuntimeError、
@@ -1110,9 +1144,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "      诊断/证据：.venv/Scripts/python.exe tools/probe_clr.py\n"
                     "      完整定位见 notes/web_layer.md「§十二补 4」"
                 )
-                if not open_browser_window(url):
+                proc = open_browser_window(url)
+                if proc is None:
                     print(f"✘ 也没能唤起浏览器，请手动打开：{url}")
-                wait_until_stopped(server)
+                wait_browser_or_stopped(proc, server)
     except KeyboardInterrupt:
         print("已停止。")
     finally:
@@ -1126,5 +1161,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 if __name__ == "__main__":
     import multiprocessing
     multiprocessing.freeze_support()
-    raise SystemExit(main())
+    code = main()
+    # 窗口关闭后彻底自毁进程，避免 Windows GUI 无控制台打包模式下因残留后台守护线程而长驻任务管理器
+    os._exit(code)
 

@@ -1416,6 +1416,241 @@ def load_role_attributes(
 
 
 # ---------------------------------------------------------------------------
+# 「每日任务自动执行」用到的成长/契约表（2026-10-16 接入，见 notes/daily_task_auto_plan.md）
+# ---------------------------------------------------------------------------
+#: 经验书数值表（``ExpBooksData``）：``baseValue`` 就是这本书给的经验。
+TABLE_EXP_BOOKS: Final[str] = "ExpBooksData"
+
+#: 角色升级经验表（``RoleExpData``）：``expSum[LV]`` —— 升级阈值 = 2 × expSum（真机实证）。
+TABLE_ROLE_EXP: Final[str] = "RoleExpData"
+
+#: 技能升级消耗表（``SkillUpgradeCostData``）：按"当前技能等级"给出各技能位的技能点花费。
+TABLE_SKILL_UPGRADE_COST: Final[str] = "SkillUpgradeCostData"
+
+#: 契约区段表（``SecretSectionData``）：区段 ID、所属区、步阶与消耗。
+TABLE_SECRET_SECTION: Final[str] = "SecretSectionData"
+
+#: 技能位（1 起，与 ``SkillClass`` 字段同序）→ ``SkillOpenStateData`` 的列名。
+SKILL_OPEN_COLUMN_BY_PLACE: Final[tuple[str, ...]] = (
+    "activeSkill",
+    "loopSkill",
+    "passive1Skill",
+    "passive2Skill",
+    "awakeningSkill",
+)
+
+#: 资质档下限：``RoleQualificationData.qualificationPrint`` ≥ 23 即 SSR 家族
+#: （23=SSR / 24=Pick UP SSR / 25=Wish SSR；来源见 notes/daily_task_auto_plan.md §四）。
+SSR_QUALIFICATION_MIN: Final[int] = 23
+
+
+def is_ssr(qualification_print: int) -> bool:
+    """资质档是否属于 SSR 家族（≥ :data:`SSR_QUALIFICATION_MIN`）。"""
+    return int(qualification_print) >= SSR_QUALIFICATION_MIN
+
+
+def load_exp_books(path: Path | None = None) -> dict[int, int]:
+    """读经验书数值表（``ExpBooksData``）：``{itemID: baseValue}``。
+
+    :raises TableError: 某行缺少主键 ``itemID`` 时。
+    """
+    rows = read_table(path or table_path(TABLE_EXP_BOOKS))
+    books: dict[int, int] = {}
+    for row in rows:
+        item_id = to_int(row, "itemID")
+        if item_id is None:
+            raise TableError(row.path, row.line_no, "缺少主键 itemID")
+        books[item_id] = _int_or(row, "baseValue", 0)
+    return books
+
+
+def load_role_exp_table(path: Path | None = None) -> dict[int, int]:
+    """读角色升级经验表（``RoleExpData``）：``{LV: expSum}``。
+
+    .. warning::
+       ``LV=50`` 的 ``expSum`` 是 ``-1``（到顶哨兵）——调用方必须自己处理
+       "已满级"的情形，别把 -1 拿去算差值。
+    """
+    rows = read_table(path or table_path(TABLE_ROLE_EXP))
+    table: dict[int, int] = {}
+    for row in rows:
+        level = to_int(row, "LV")
+        if level is None:
+            raise TableError(row.path, row.line_no, "缺少主键 LV")
+        table[level] = _int_or(row, "expSum", -1)
+    return table
+
+
+@dataclass(frozen=True)
+class SkillUpgradeCost:
+    """技能升级花费（``SkillUpgradeCostData`` 的一行：按**当前等级**给花费）。
+
+    列名与表一致（``skillNowLv`` = 技能**当前**等级；花费是"升到下一级"的）。
+    """
+
+    level: int
+    active: int
+    loop: int
+    passive1: int
+    passive2: int
+    awakening: int
+
+    def cost_of(self, place: int) -> int:
+        """第 ``place`` 个技能位（1 起）的花费；越界返回大数（= 不可升）。"""
+        values = (self.active, self.loop, self.passive1, self.passive2, self.awakening)
+        if 1 <= place <= len(values):
+            return values[place - 1]
+        return 10**9
+
+
+def load_skill_upgrade_costs(path: Path | None = None) -> dict[int, SkillUpgradeCost]:
+    """读技能升级消耗表：``{当前技能等级: 各技能位花费}``。"""
+    rows = read_table(path or table_path(TABLE_SKILL_UPGRADE_COST))
+    costs: dict[int, SkillUpgradeCost] = {}
+    for row in rows:
+        level = to_int(row, "skillNowLv")
+        if level is None:
+            raise TableError(row.path, row.line_no, "缺少主键 skillNowLv")
+        costs[level] = SkillUpgradeCost(
+            level=level,
+            active=_int_or(row, "activeSkillCost", 0),
+            loop=_int_or(row, "loopSkillCost", 0),
+            passive1=_int_or(row, "passive1SkillCost", 0),
+            passive2=_int_or(row, "passive2SkillCost", 0),
+            awakening=_int_or(row, "awakeningSkillCost", 0),
+        )
+    return costs
+
+
+@dataclass(frozen=True)
+class SecretSection:
+    """一个契约区段（``SecretSectionData`` 的一行）。"""
+
+    #: ``secretSectionID`` —— 抽取时作为 ``SweepSectionPacket.sectionID``
+    section_id: int
+    #: ``secretAreaID`` —— 所属契约区
+    area_id: int
+    #: ``secretSectionName`` —— 名称（如"拼圖召喚 Step 1"）
+    name: str | None
+    #: ``secretSectionOrder`` —— 步阶（1~4；越小越先）
+    order: int
+    #: ``energyCost`` —— 每抽消耗的 CP 数量（步阶 1~4 = 5/10/15/20）
+    energy_cost: int
+    #: 原始行（保底手段：将来需要新列时不必改本类）
+    raw: TableRow = field(compare=False, repr=False)
+
+
+def load_secret_sections(path: Path | None = None) -> dict[int, SecretSection]:
+    """读契约区段表：``{secretSectionID: 配置}``。"""
+    rows = read_table(path or table_path(TABLE_SECRET_SECTION))
+    sections: dict[int, SecretSection] = {}
+    for row in rows:
+        section_id = to_int(row, "secretSectionID")
+        if section_id is None:
+            raise TableError(row.path, row.line_no, "缺少主键 secretSectionID")
+        sections[section_id] = SecretSection(
+            section_id=section_id,
+            area_id=_int_or(row, "secretAreaID", 0),
+            name=to_text(row, "secretSectionName"),
+            order=_int_or(row, "secretSectionOrder", 0),
+            energy_cost=_int_or(row, "energyCost", 0),
+            raw=row,
+        )
+    return sections
+
+
+@dataclass(frozen=True)
+class RoleSkillGates:
+    """一个角色（形态）的技能位**品质门槛**（``SkillOpenStateData`` 的一行子集）。
+
+    :ivar requirement: 5 个技能位（与 ``SKILL_OPEN_COLUMN_BY_PLACE`` 同序）的
+        品质要求；``99`` 表示该位不开放。
+    """
+
+    #: ``RoleMainData.roleMainID``（130xxxxxx）
+    role_main_id: int
+    #: 五个技能位的品质要求（顺序 = 技能位 1..5）
+    requirement: tuple[int, ...]
+
+    def allows(self, place: int, quality: int) -> bool:
+        """品质 ``quality`` 是否达到第 ``place`` 个技能位的门槛。"""
+        if not 1 <= place <= len(self.requirement):
+            return False
+        return int(quality) >= self.requirement[place - 1]
+
+
+#: 角色形态 → 技能开放档（``RoleInfoData.skillOpenID`` → ``SkillOpenStateData.skillOpenID``）
+REL_ROLE_INFO_SKILL_OPEN: Final[str] = (
+    "RoleInfoData|skillOpenID|SkillOpenStateData|skillOpenID"
+)
+
+
+def load_role_skill_gates(
+    *,
+    relative_path: Path | None = None,
+    main_path: Path | None = None,
+    info_path: Path | None = None,
+    open_path: Path | None = None,
+) -> dict[int, RoleSkillGates]:
+    """构造 ``{roleMainID: 技能位品质门槛}``。
+
+    链路：RoleMainID →（``DataRelative`` 的 info 关系）→ RoleInfoID →
+    RoleInfoData 行 → ``skillOpenID`` → SkillOpenStateData 行。
+
+    真机实证（2026-10-16）：英雄品质低于门槛时，升级该技能位返回 ``errorCode=-4``
+    （quality=0 升 loop 被拒、同英雄升 active 通过；quality≥4 升 passive1 通过）。
+
+    :raises TableError: 任一引用关系的值数与源表行数不符（两边错位）时。
+    """
+    relations = load_data_relative(relative_path)
+    main_rows = read_table(main_path or table_path(TABLE_ROLE_MAIN))
+    info_rows = read_table(info_path or table_path(TABLE_ROLE_INFO))
+
+    info_ids = _relation_aligned(
+        relations,
+        REL_ROLE_MAIN_INFO,
+        source_rows=len(main_rows),
+        source_name=TABLE_ROLE_MAIN,
+    )
+    skill_open_ids = _relation_aligned(
+        relations,
+        REL_ROLE_INFO_SKILL_OPEN,
+        source_rows=len(info_rows),
+        source_name=TABLE_ROLE_INFO,
+    )
+
+    open_rows = read_table(open_path or table_path("SkillOpenStateData"))
+    open_state: dict[int, tuple[int, ...]] = {}
+    for row in open_rows:
+        open_id = to_int(row, "skillOpenID")
+        if open_id is None:
+            raise TableError(row.path, row.line_no, "缺少主键 skillOpenID")
+        open_state[open_id] = tuple(
+            _int_or(row, column, 99) for column in SKILL_OPEN_COLUMN_BY_PLACE
+        )
+
+    info_index: dict[int | None, int] = {}
+    for position, row in enumerate(info_rows):
+        info_index[to_int(row, "roleID")] = position
+
+    gates: dict[int, RoleSkillGates] = {}
+    for position, row in enumerate(main_rows):
+        main_id = to_int(row, "roleMainID")
+        if main_id is None:
+            raise TableError(row.path, row.line_no, "缺少主键 roleMainID")
+        info_position = info_index.get(info_ids[position], -1)
+        if info_position < 0:
+            continue
+        requirement = open_state.get(skill_open_ids[info_position])
+        if requirement is None:
+            continue
+        gates[main_id] = RoleSkillGates(
+            role_main_id=main_id, requirement=requirement
+        )
+    return gates
+
+
+# ---------------------------------------------------------------------------
 # 降临／活动关卡（SpecialArea / SpecialSection）
 #   —— 体力扫荡板块的**屏蔽依据**（"哪些关卡能扫"只有一个权威来源）
 # ---------------------------------------------------------------------------

@@ -12,9 +12,12 @@ endDateTime, weeks}`` 五个字段，没有任何完成位（抓包实证，见
 换端口 / 换窗口（桌面壳 vs Edge 回落）就丢了。
 
 【与 services/daily_state.py 的三点不同（为什么另开一个模块）】
-1. **换日口径不同**：这里用 :func:`models.daily_reset.banquet_day`（**06:00** 换日），
+1. **换日口径不同**：这里用 :func:`models.daily_reset.banquet_day`（**06:10** 换日，
+   = 早宴席的刷新时刻，见 ``daily_reset.BANQUET_RESET_HOUR/MINUTE``），
    而不是游戏日（05:00）—— 晚宴席 14:00–次日06:00 跨过 05:00，
    用游戏日会把"昨晚刚吃完的晚宴席"判成新的一天从而允许重复发包。
+   （2026-10-16 校正：本段原先写的是 06:00，与常量不符 —— 06:00–06:10 是
+   空档期，仍算**前一**宴席日的尾巴。）
 2. **记录内容不同**：那边是"任务名清单"，这里是"早/晚两个完成位"。
 3. **用途不同**：那边的记录会让前端**跳过自动执行**；这里的记录只给**手动任务**
    界面置灰用（并顺带阻止重复发包），不参与"自动执行跳过"。
@@ -200,13 +203,29 @@ def describe(
     now: datetime | None = None,
     path: Path | None = None,
 ) -> dict[str, Any]:
-    """给 ``/api/tasks`` 用的视图：``{banquet_day, meals}``。
+    """给 ``/api/tasks`` 用的视图：``{banquet_day, reset_text, in_gap, meals}``。
 
-    :return: ``{"banquet_day": "2026-10-03", "meals": ["morning"]}`` ——
+    :return: ``{"banquet_day": "2026-10-03", "reset_text": "06:10",
+        "in_gap": False, "meals": ["morning"]}`` ——
         前端据 ``meals`` 把对应按钮置灰。``banquet_day`` 一并给出，
         是为了在排查"为什么按钮没灰"时能一眼看出用的是哪一天的口径。
+
+    【★ 2026-10-18：为什么把 ``reset_text`` / ``in_gap`` 也下发】
+    用户要求"宴席日时间要同步到宴席卡片里读取宴席时段的位置"。而换日时刻来自
+    ``models.daily_reset.BANQUET_RESET_HOUR/MINUTE``（可用环境变量覆盖）——
+    前端要是自己写死 "06:10"，游戏改点或改环境变量之后界面就开始说谎，
+    且没有任何报错。所以由后端把**它实际在用的那个时刻**作为文本下发，
+    前端只负责显示（与 ``next_daily_reset`` 等字段同一个原则）。
     """
+    moment = now
     return {
-        "banquet_day": daily_reset.banquet_day(now),
+        "banquet_day": daily_reset.banquet_day(moment),
+        #: 换日时刻（``06:10`` 形态）—— 卡片头部的"· 06:10 换日"就用它
+        "reset_text": (
+            f"{daily_reset.BANQUET_RESET_HOUR:02d}:"
+            f"{daily_reset.BANQUET_RESET_MINUTE:02d}"
+        ),
+        #: 此刻是否在空档期（06:00–06:10）：卡片可直接据此提示"休整中"
+        "in_gap": daily_reset.in_banquet_gap(moment),
         "meals": list(meals_done(session, now=now, path=path)),
     }

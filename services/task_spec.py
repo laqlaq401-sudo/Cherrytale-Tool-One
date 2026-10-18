@@ -68,12 +68,13 @@ ParamKind = Literal["int", "float", "str", "bool"]
 #: * ``auto``（自动任务）：纯领取 / 只读，不消耗任何资源 → 默认勾选；
 #: * ``manual``（主动任务）：会消耗资源或需要参数 → 默认不勾、运行前二次确认；
 #: * ``planned``（待实现）：协议还没确认，只占位。
-GroupKey = Literal["auto", "manual", "planned"]
+GroupKey = Literal["auto", "manual", "diamond", "planned"]
 
 #: ``(分组键, 中文标题, 一句话说明)`` —— 顺序即 UI 展示顺序。
 GROUPS: Final[tuple[tuple[GroupKey, str, str], ...]] = (
     ("auto", "自动任务", "纯领取 / 只读：不消耗任何资源，可以无脑跑（默认勾选）"),
     ("manual", "主动任务", "会消耗资源或需要参数：默认不勾选，运行前会二次确认"),
+    ("diamond", "钻石使用", "消耗钻石的任务：需单独开启钻石总闸并手动确认执行"),
     ("planned", "待实现", "协议尚未确认，仅作占位（不会被执行）"),
 )
 
@@ -112,6 +113,19 @@ class ParamSpec:
     cli_flag: str
     danger: bool = False
     from_config: str = ""
+    #: 数值下限（**只约束界面**，2026-10-18 新增）。
+    #:
+    #: 【为什么需要它】
+    #: 「钻石使用」里的四个「购买次数」原来带 ``choices=(0, 1, 2, 3, 5, 10)``，
+    #: 界面因此是下拉，而第一档 ``0`` 表示"只读查询"。用户要求改成步进器并把
+    #: 0 次去掉（不再提供只读），于是把"下限"从档位里**拆出来单独描述**：
+    #: 删掉 ``choices`` 后数字参数会走步进器，没有下限的话用户照样能填 0。
+    #:
+    #: ``None`` / ``0`` = 不加下限（例如 ``top_pvp_battle.battles`` 的 0 是
+    #: "打到次数用完"，必须保留）。**不参与** :meth:`coerce` —— 传 0 不会在
+    #: 这一层被拒，拒在哪一层由任务自己决定（见 ``tasks/buy_*.py``：直接报错，
+    #: 而不是静默升成 1 去真花钻石）。
+    minimum: int | None = None
     #: 固定档位（可选项集合）。非空时 UI 渲染成**下拉**而不是自由输入框。
     #:
     #: 【为什么要档位而不是自由数字（2026-09-22 新增）】
@@ -284,6 +298,19 @@ class TaskSpec:
     :param hidden: 是否**不出现在任务清单里**。例如 ``login``：它由"登录 / 选区"
         专用界面负责，留在清单里反而会让人以为"勾上它就能登录"。
         （CLI 不受影响：``python main.py run login`` 照常可用。）
+    :param batch_eligible: **参与主动任务的「一键执行」**（2026-10-16 用户需求）。
+        为 ``True`` 的主动任务卡片右侧会有一个勾选框，顶部「一键执行」按钮会
+        按顺序把勾上的这些任务拼成**一次** ``/api/run`` 提交。
+        **默认 ``False``（显式登记才进）**：一键执行会真发包、真消耗，
+        新增任务应当由人明确决定要不要进这个名单，而不是被默认带进来 ——
+        与 ``default_checked`` / ``once_per_day`` 同一种"显式登记"风格。
+        未被登记的任务（例如 ``buy_energy``、``push_main_stage``）**连勾选框都不画**，
+        免得出现"勾了却不生效"的假控件。
+        名单与顺序的唯一来源是这里，**前端不自己抄一份**
+        （理由与 :data:`ONCE_PER_DAY_TASKS` 完全相同）。
+    :param batch_order: 一键执行里的排序权重；``None`` = 按声明顺序。
+        目前只有宴席用它（``-1``，用户要求"获得体力类优先，宴席排第一"）。
+        排序是**稳定排序**：显式值小的在前，同权重（含全部 ``None``）保持声明顺序。
 
     【运行期属性为什么不写在这里】
     ``requires_auth`` / ``spends_diamond`` / ``diamond_purposes`` /
@@ -300,7 +327,19 @@ class TaskSpec:
     default_checked: bool = False
     enabled: bool = True
     #: 每个游戏日只自动执行一次（见 :data:`services.daily_state` 的说明）。
+    #:
+    #: 【★ 2026-10-16：对**手动任务**的第二种含义】
+    #: ``alliance_donate``（工会捐献）也登记了它，但它不在自动执行的候选里
+    #: （自动执行只取 ``group="auto"``）。对这类任务，这个标记的含义退化为
+    #: **"每天一次的本地记账"** —— 服务端在它执行成功后记一笔
+    #: （``webapi/state.py::_on_step_finish``），前端据此把卡片置灰、
+    #: 一键执行时跳过它。它**不参与**自动执行编排（``ONCE_PER_DAY_TRIGGERS``
+    #: 那套"只在第一次登录工具时执行"只作用于 auto 组）。
     once_per_day: bool = False
+    #: 参与「一键执行」（见类文档；默认不进，必须显式登记）。
+    batch_eligible: bool = False
+    #: 一键执行里的排序权重；``None`` = 按声明顺序（见类文档）。
+    batch_order: int | None = None
     hidden: bool = False
 
     def param(self, name: str) -> ParamSpec | None:
@@ -600,17 +639,40 @@ MATERIAL_SECTION_PARAM: Final[ParamSpec] = ParamSpec(
     allow_manual=False,
 )
 
-#: ``buy_energy``：用钻石购买体力次数（0 = 只读）。
+#: 四个「购买次数」的公共口径（★ 2026-10-18 用户需求）。
+#:
+#: 【改了什么】
+#: 原来它们各带 ``choices=(0, 1, 2, 3, 5, 10)`` → 网页渲染成**档位下拉**，
+#: 且第一档 ``0`` 的文案是"0（只读：什么都不扫）"。用户要求：
+#: ① 改成与「打几场」一致的**加减号步进器**；② **取消 0 次**，不再提供只读。
+#:
+#: 【怎么实现的】
+#: 删掉 ``choices``（前端因此走 ``numberStepper``）+ 加 ``minimum=1``
+#: （步进器的减号停在 1、手输 0 在失焦时归位到 1）。**不是**把 0 从档位里
+#: 拿掉却留着下拉 —— 那样只剩 1/2/3/5/10 五档，仍然不能自由加减。
+#:
+#: 【后端为什么也要改】
+#: 界面不给 0 ≠ 传不进 0（CLI 的 ``--times 0``、旧存档、直接调 API 都行）。
+#: 四个任务层现在对 ``times < 1`` **直接报错**，而不是静默只读或静默升成 1 ——
+#: 后者会在用户只想看看的时候真花钻石，是最不能接受的一种"猜测"。
+#:
+#: .. note::
+#:    ``minimum`` 只约束界面：``coerce`` 不会因为它拒绝 0（见 ParamSpec.minimum）。
+_BUY_TIMES_MINIMUM: Final[int] = 1
+
+#: ``buy_energy``：用钻石购买体力次数（★ 2026-10-18：取消 0 = 只读，下限 1）。
 BUY_ENERGY_TIMES_PARAM: Final[ParamSpec] = ParamSpec(
     name="times",
     kind="int",
-    default=0,
+    # 默认值跟下限一起提高：界面首屏就是 1 次。真正花钱仍要过钻石总闸 +
+    # 手动点「执行」，所以"默认 1"不等于"默认就买"。
+    default=_BUY_TIMES_MINIMUM,
     label="购买次数",
-    hint="购买体力次数（每次 120 体力）",
+    hint="购买体力次数（每次 120 体力；至少 1 次）",
     cli_flag="--times",
     danger=True,
     from_config="BUY_ENERGY_TIMES",
-    choices=(0, 1, 2, 3, 5, 10),
+    minimum=_BUY_TIMES_MINIMUM,
 )
 
 #: ``buy_energy``：钻石消耗上限（0 = 不限制）。
@@ -625,7 +687,49 @@ BUY_ENERGY_MAX_COST_PARAM: Final[ParamSpec] = ParamSpec(
     from_config="BUY_ENERGY_MAX_COST",
 )
 
-#: ``top_pvp_battle``：本次最多打几场（0 = 只读）。
+#: ``buy_arena_ticket``：购买竞技场挑战次数（单次 1 次，★ 下限 1、无只读）。
+BUY_ARENA_TIMES_PARAM: Final[ParamSpec] = ParamSpec(
+    name="times",
+    kind="int",
+    default=_BUY_TIMES_MINIMUM,
+    label="购买次数",
+    hint="购买竞技场挑战次数（单次 1 次；至少 1 次）",
+    cli_flag="--times",
+    danger=True,
+    minimum=_BUY_TIMES_MINIMUM,
+)
+
+#: ``buy_wudou_ticket``：购买天命对决挑战次数（单次 1 次，★ 下限 1、无只读）。
+BUY_WUDOU_TIMES_PARAM: Final[ParamSpec] = ParamSpec(
+    name="times",
+    kind="int",
+    default=_BUY_TIMES_MINIMUM,
+    label="购买次数",
+    hint="购买天命对决挑战次数（单次 1 次；至少 1 次）",
+    cli_flag="--times",
+    danger=True,
+    minimum=_BUY_TIMES_MINIMUM,
+)
+
+#: ``buy_top_pvp_ticket``：购买荣耀之巅挑战次数（单次 1 次，★ 下限 1、无只读）。
+BUY_TOP_PVP_TIMES_PARAM: Final[ParamSpec] = ParamSpec(
+    name="times",
+    kind="int",
+    default=_BUY_TIMES_MINIMUM,
+    label="购买次数",
+    hint="购买荣耀之巅挑战次数（单次 1 次；至少 1 次）",
+    cli_flag="--times",
+    danger=True,
+    minimum=_BUY_TIMES_MINIMUM,
+)
+
+#: ``top_pvp_battle``：本次最多打几场（0 = 打到次数用完）。
+#:
+#: 【★ 2026-10-18：0 的语义从"只读"改成"打完所有剩余次数"】
+#: 用户要求"荣耀之巅中打几场的 0 和其他战斗同步为打到没次数为止而不是只读"。
+#: 现在四个战斗任务（荣耀之巅 / 天梯竞技场 / 天命对决 / 失控炼成阵）的
+#: ``battles`` 口径完全一致：``0`` = 打到服务端说没次数，正数 = 只打这么多场。
+#: "只看不打"改由隐藏任务 ``top_pvp_status``（39001 only）承担。
 #:
 #: 【它为什么不登记成"运行级参数"（2026-09-25 归位）】
 #: 语义上它像"这一次运行打几场"，但**只有荣耀之巅认识它**。登记成运行级时，
@@ -638,23 +742,100 @@ BUY_ENERGY_MAX_COST_PARAM: Final[ParamSpec] = ParamSpec(
 BATTLES_PARAM: Final[ParamSpec] = ParamSpec(
     name="battles",
     kind="int",
-    default=None,
+    default=0,
     label="打几场",
-    hint="挑战场数（0 为只读查询）",
+    hint="挑战场数（0 为打完所有剩余次数；大于 0 为指定场数）",
     cli_flag="--battles",
     danger=True,
     from_config="TOP_PVP_BATTLES",
 )
 
-#: ``top_pvp_battle``：两场之间的间隔秒数。
+#: ``top_pvp_battle`` 等战斗任务：每场之间的间隔秒数 —— **已从规格表移除（2026-10-18）**。
+#:
+#: 【为什么从规格表与前端卡片中删除】
+#: 当前项目已对各战斗任务严格进行了分类时间拟真（例如荣耀之巅/竞技场/天命对决/炼成阵
+#: 场间均严格随机 5~10 秒礼貌冷却，且具备波次与战力动态耗时模型），无需在前端向用户
+#: 暴露修改战斗时间间隔的操作区间。战斗任务一律按内建的分类拟真逻辑执行。
 INTERVAL_PARAM: Final[ParamSpec] = ParamSpec(
     name="interval",
     kind="float",
     default=None,
     label="每场间隔（秒）",
-    hint="战斗间隔时间（秒，默认 15 秒）",
-    cli_flag="--interval",
+    hint="战斗间隔时间（秒，已由分类时间拟真接管）",
+    cli_flag="",
     from_config="TOP_PVP_INTERVAL_SECONDS",
+)
+
+#: ``wudou_pvp_battle``：打几场（天命对决挑战场数）。
+WUDOU_BATTLES_PARAM: Final[ParamSpec] = ParamSpec(
+    name="battles",
+    kind="int",
+    default=0,
+    label="打几场",
+    hint="挑战场数（0 为打完所有剩余次数；大于 0 为指定场数）",
+    cli_flag="--battles",
+    danger=True,
+    from_config="WUDOU_PVP_BATTLES",
+)
+
+#: ``wudou_pvp_battle``：两场之间的间隔秒数 —— **已从规格表移除（2026-10-18）**。
+WUDOU_INTERVAL_PARAM: Final[ParamSpec] = ParamSpec(
+    name="interval",
+    kind="float",
+    default=None,
+    label="每场间隔（秒）",
+    hint="战斗间隔时间（秒，已由分类时间拟真接管）",
+    cli_flag="",
+    from_config="WUDOU_PVP_INTERVAL_MIN",
+)
+
+#: ``wudou_pvp_battle``：选人策略（低战优先 / NPC 优先 / 冲榜优先）。
+WUDOU_STRATEGY_PARAM: Final[ParamSpec] = ParamSpec(
+    name="strategy",
+    kind="str",
+    default=None,
+    label="选人策略",
+    hint="挑选对手策略（lowest_power 低战优先，npc_first 优先NPC，rank_first 冲榜）",
+    cli_flag="--strategy",
+    from_config="WUDOU_PVP_STRATEGY",
+    choices=("lowest_power", "npc_first", "rank_first"),
+    choice_labels={
+        "lowest_power": "低战优先（胜率最高）",
+        "npc_first": "NPC 优先（无 NPC 则低战）",
+        "rank_first": "冲榜优先（挑最高名次）",
+    },
+)
+
+#: ``battle_arena``：打几场（天梯竞技场挑战场数）。
+ARENA_BATTLES_PARAM: Final[ParamSpec] = ParamSpec(
+    name="battles",
+    kind="int",
+    default=0,
+    label="打几场",
+    hint="挑战场数（0 为打完所有剩余次数；严格仅挑战低战 NPC 训练家）",
+    cli_flag="--battles",
+    danger=True,
+)
+
+#: ``battle_yimo``：打几场（失控炼成阵挑战场数）。
+YIMO_BATTLES_PARAM: Final[ParamSpec] = ParamSpec(
+    name="battles",
+    kind="int",
+    default=0,
+    label="打几场",
+    hint="挑战场数（0 为打完所有剩余次数；大于 0 为指定场数）",
+    cli_flag="--battles",
+    danger=True,
+)
+
+#: ``battle_yimo``：仅日常打卡模式（保底低分，扣血万分比按「上报伤害 / 部位血量」折算）。
+YIMO_DAILY_ONLY_PARAM: Final[ParamSpec] = ParamSpec(
+    name="daily_only",
+    kind="bool",
+    default=True,
+    label="仅日常打卡（小伤害安全模式）",
+    hint="开启后上报保底浮动得分（1200~2800），扣血万分比按「上报伤害 / 部位血量」折算（该得分下为 0，不改变全服 Boss 进度与排行榜）",
+    cli_flag="--daily-only",
 )
 
 #: ``push_main_stage``：指定目标关卡（sectionID）。
@@ -697,14 +878,15 @@ MAX_STAGES_PARAM: Final[ParamSpec] = ParamSpec(
     danger=True,
 )
 
-#: ``push_main_stage``：每关模拟战斗耗时下限（秒）。
+#: ``push_main_stage``：每关模拟战斗耗时下限（秒，内部自动分阶拟真，隐藏）。
 DELAY_MIN_PARAM: Final[ParamSpec] = ParamSpec(
     name="delay_min",
     kind="float",
     default=15.0,
     label="单关最小延迟",
     hint="单关模拟耗时下限（秒）",
-    cli_flag="--delay-min",
+    cli_flag="",
+    hidden=True,
 )
 
 #: ``market_buy``：是否购买血钻（``itemID`` 200200000）。
@@ -758,14 +940,15 @@ MARKET_FRAGRANCE_PARAM: Final[ParamSpec] = ParamSpec(
     danger=True,
 )
 
-#: ``push_main_stage``：每关模拟战斗耗时上限（秒）。
+#: ``push_main_stage``：每关模拟战斗耗时上限（秒，内部自动分阶拟真，隐藏）。
 DELAY_MAX_PARAM: Final[ParamSpec] = ParamSpec(
     name="delay_max",
     kind="float",
     default=25.0,
     label="单关最大延迟",
     hint="单关模拟耗时上限（秒）",
-    cli_flag="--delay-max",
+    cli_flag="",
+    hidden=True,
 )
 
 #: ``top_pvp_battle``：是否保留战斗演出 —— **已删除（2026-09-25）**。
@@ -802,6 +985,18 @@ TASK_SPECS: Final[dict[str, TaskSpec]] = {
         group="auto",
         title="邮件一键领取",
         summary="领取全部未读邮件",
+        default_checked=True,
+    ),
+    # ★ 2026-10-18：好友赠礼「一键领取」独立成卡。
+    # 与 daily_task_auto 里的「好友赠礼（全送）」是同一个 10009 报文的两个 actionType：
+    # 4 = 送（补日常任务）、3 = 收（本任务）。**刻意不登记 once_per_day**（用户拍板）：
+    # 好友可能在你开工具之后才送礼，每天只自动跑一次会漏；领取零成本，
+    # 重复发最多得到"没有可领取"。
+    "friend_gift_claim": TaskSpec(
+        name="friend_gift_claim",
+        group="auto",
+        title="好友赠礼一键领取",
+        summary="一键领取好友送来的全部礼物（零消耗）",
         default_checked=True,
     ),
     # ---------------- ② 只读数据（交给「信息展示」面板，不在任务清单里） ----------------
@@ -855,6 +1050,17 @@ TASK_SPECS: Final[dict[str, TaskSpec]] = {
         group="auto",
         title="失控炼成阵状态",
         summary="查询失控炼成阵挑战状态",
+        hidden=True,
+    ),
+    # ★ 2026-10-18：荣耀之巅的只读状态（39001 only）。
+    # 与上面四个同构、同样隐藏：它零消耗、无参数，只给 /api/player 的信息面板读数。
+    # 存在的理由见 tasks/top_pvp_status.py —— top_pvp_battle 的 0 场已改成
+    # "打到次数用完"，战斗任务因此不再提供"只看不打"。
+    "top_pvp_status": TaskSpec(
+        name="top_pvp_status",
+        group="auto",
+        title="荣耀之巅状态",
+        summary="查询荣耀之巅段位、排名与积分",
         hidden=True,
     ),
     "main_stage_status": TaskSpec(
@@ -949,11 +1155,18 @@ TASK_SPECS: Final[dict[str, TaskSpec]] = {
     # → 工会金币捐献 → 主线。
     # UI 的组内顺序就是这里的声明顺序（``describe_tasks`` 只按 group 做稳定
     # 排序，不打乱组内先后），所以要改顺序只动这一段，**不要**去改前端。
+    #
+    # 【★ 2026-10-16：「一键执行」的成员与顺序也在这段里】
+    # 成员 = 登记了 ``batch_eligible=True`` 的这几个（见各自声明）；
+    # 顺序 = ``batch_order`` 升序，同权重按下面的声明顺序（稳定排序）。
+    # 最终顺序：宴席(-1) → 降临扫荡 → 荣耀之巅 → 素材关卡 → 一般市集 → 工会捐献。
+    # **未登记的两个（购买体力 / 主线通关）连勾选框都不画** —— 见各自的注释。
     "sweep_activity": TaskSpec(
         name="sweep_activity",
         group="manual",
         title="降临 / 活动关卡扫荡",
         summary="按所选区域批量扫荡，消耗体力与扫荡券",
+        batch_eligible=True,
         params=(
             AREA_PARAM,
             ACTIVITY_TIMES_PARAM,
@@ -969,13 +1182,50 @@ TASK_SPECS: Final[dict[str, TaskSpec]] = {
         group="manual",
         title="荣耀之巅",
         summary="自动匹配并完成挑战，消耗挑战次数",
-        params=(BATTLES_PARAM, INTERVAL_PARAM),
+        batch_eligible=True,
+        params=(BATTLES_PARAM,),
+    ),
+    "battle_arena": TaskSpec(
+        name="battle_arena",
+        group="manual",
+        title="天梯竞技场（NPC）",
+        summary="【挑战限定】严格仅择弱挑战系统低战 NPC 训练家（遇全真人对手安全跳过），结算后自动一键领奖；消耗竞技场挑战次数",
+        batch_eligible=True,
+        params=(ARENA_BATTLES_PARAM,),
+    ),
+    "wudou_pvp_battle": TaskSpec(
+        name="wudou_pvp_battle",
+        group="manual",
+        title="天命对决",
+        summary="自动选人并完成挑战，消耗挑战次数",
+        batch_eligible=True,
+        params=(WUDOU_BATTLES_PARAM, WUDOU_STRATEGY_PARAM),
+    ),
+    "battle_experiment": TaskSpec(
+        name="battle_experiment",
+        group="manual",
+        title="辉煌航迹试炼",
+        summary="自动推进试炼关卡或挑战每日终极试炼，领取通关奖励",
+        batch_eligible=True,
+    ),
+    "battle_yimo": TaskSpec(
+        name="battle_yimo",
+        group="manual",
+        title="失控炼成阵（小伤害）",
+        summary="【挑战限定】仅日常打卡安全模式：上报保底浮动分（1200~2800），扣血万分比按伤害折算（该得分下为 0，不改变世界 Boss 进度与排行榜）；消耗挑战次数",
+        batch_eligible=True,
+        params=(YIMO_BATTLES_PARAM, YIMO_DAILY_ONLY_PARAM),
     ),
     "bbq_energy": TaskSpec(
         name="bbq_energy",
         group="manual",
         title="宴席",
         summary="享用体力，可邀请好友（花钻石）",
+        batch_eligible=True,
+        # ★ 2026-10-16：一键执行里**排第一**（用户："以获得体力类为首先执行"）。
+        # 其余成员的 batch_order 都是 None（= 按声明顺序），
+        # 所以 -1 只需写这一处，不会打乱其它任务的相对顺序。
+        batch_order=-1,
         params=(
             MEAL_PARAM,
             INVITE_MORNING_PARAM,
@@ -983,18 +1233,12 @@ TASK_SPECS: Final[dict[str, TaskSpec]] = {
             INVITE_FRIENDS_PARAM,
         ),
     ),
-    "buy_energy": TaskSpec(
-        name="buy_energy",
-        group="manual",
-        title="购买体力（钻石）",
-        summary="每次 120 点",
-        params=(BUY_ENERGY_TIMES_PARAM,),
-    ),
     "sweep_material": TaskSpec(
         name="sweep_material",
         group="manual",
         title="素材关卡与元素试炼",
         summary="不消耗体力，消耗每日挑战次数",
+        batch_eligible=True,
         params=(
             CATEGORY_PARAM,
             MATERIAL_AREA_PARAM,
@@ -1008,6 +1252,7 @@ TASK_SPECS: Final[dict[str, TaskSpec]] = {
         group="manual",
         title="一般市集购买",
         summary="按每日限购买满（消耗金币）",
+        batch_eligible=True,
         params=(
             MARKET_BLOOD_DIAMOND_PARAM,
             MARKET_AMBER_PARAM,
@@ -1020,17 +1265,71 @@ TASK_SPECS: Final[dict[str, TaskSpec]] = {
         group="manual",
         title="工会金币捐献（默认满档）",
         summary="消耗 25,000 金币",
+        batch_eligible=True,
+        # ★ 2026-10-16（用户："捐献本身和吃宴席一样，要改成执行一次后就变灰"）：
+        # 借 once_per_day 的**服务端记账**实现"本游戏日已捐献"——
+        # 成功执行后 webapi/state.py 会记一笔，前端据此把卡片置灰、
+        # 一键执行时跳过它。它不在自动执行候选里（那是 group="auto"），
+        # 所以不会因为这一行而被自动跑。详见 TaskSpec.once_per_day 的说明。
+        once_per_day=True,
     ),
+    "daily_task_auto": TaskSpec(
+        name="daily_task_auto",
+        group="manual",
+        title="每日任务自动执行",
+        summary="补 6 个缺口动作并统一领奖；可反复执行（只补剩余）",
+        batch_eligible=True,
+    ),
+    # ★ 2026-10-18 用户要求：**主线通关排在主动任务最下面**。
+    # 卡片顺序 = ``TASK_SPECS`` 的声明顺序（前端只按 group 过滤、不自己排序，
+    # 见 ``web/assets/app.js::renderTaskGroup``），所以"置底"就体现在这里的
+    # 声明位置上 —— 不需要在前端写一条"把 push_main_stage 挪到末尾"的特例。
     "push_main_stage": TaskSpec(
         name="push_main_stage",
         group="manual",
         title="主线关卡通关",
         summary="自动推进并领取章节满星宝箱，消耗体力",
+        # ★ 2026-10-16：**刻意不登记 batch_eligible**（用户："主线通关也不
+        # 加入一键执行里面"）。它是唯一 `max_stages` 默认 0 = **不限关数**
+        # （推至体力耗尽）的任务，可能跑很久 —— 放进"一键"会把整批拖住。
         params=(
             MAX_STAGES_PARAM,
             DELAY_MIN_PARAM,
             DELAY_MAX_PARAM,
         ),
+    ),
+    # ---------------- ⑤ 钻石使用（需开启总闸并单独执行） ----------------
+    "buy_energy": TaskSpec(
+        name="buy_energy",
+        group="diamond",
+        title="购买体力（钻石）",
+        summary="用钻石购买体力，每次 120 点（前置防超量发包）",
+        # ★ 2026-10-18：``max_cost`` 之前**只在任务构造函数里存在**、没登记进
+        # 规格表 —— 于是 ``normalize_params`` 把它当"不认识的参数"丢掉，
+        # ``services/runner.py`` 里 ``if "max_cost" in params`` 永远不成立，
+        # 网页上根本设不了预算上限（一个静默失效的安全阀）。现在补登记。
+        params=(BUY_ENERGY_TIMES_PARAM, BUY_ENERGY_MAX_COST_PARAM),
+    ),
+    "buy_arena_ticket": TaskSpec(
+        name="buy_arena_ticket",
+        group="diamond",
+        title="购买竞技场挑战次数（钻石）",
+        summary="用钻石购买天梯竞技场门票（单次 1 次，前置防超量发包）",
+        params=(BUY_ARENA_TIMES_PARAM,),
+    ),
+    "buy_wudou_ticket": TaskSpec(
+        name="buy_wudou_ticket",
+        group="diamond",
+        title="购买天命对决挑战次数（钻石）",
+        summary="用钻石购买天命对决门票（单次 1 次，前置防超量发包）",
+        params=(BUY_WUDOU_TIMES_PARAM,),
+    ),
+    "buy_top_pvp_ticket": TaskSpec(
+        name="buy_top_pvp_ticket",
+        group="diamond",
+        title="购买荣耀之巅挑战次数（钻石）",
+        summary="用钻石购买荣耀之巅门票（单次 1 次，前置防超量发包）",
+        params=(BUY_TOP_PVP_TIMES_PARAM,),
     ),
 }
 
@@ -1069,6 +1368,51 @@ ONCE_PER_DAY_TASKS: Final[frozenset[str]] = frozenset(
 def is_once_per_day(task_name: str) -> bool:
     """这个任务是否属于"每游戏日只自动跑一次"（见 :data:`ONCE_PER_DAY_TASKS`）。"""
     return task_name in ONCE_PER_DAY_TASKS
+
+
+#: **参与主动任务「一键执行」**的任务名（2026-10-16 用户需求）。
+#:
+#: 成员（共 6 个）：宴席 ``bbq_energy``、降临扫荡 ``sweep_activity``、
+#: 荣耀之巅 ``top_pvp_battle``、素材关卡 ``sweep_material``、
+#: 一般市集 ``market_buy``、工会捐献 ``alliance_donate``。
+#: **刻意排除**：``buy_energy``（花钻石买体力）、``push_main_stage``
+#: （`max_stages` 默认 0 = 不限关数，可能跑很久）—— 两者连勾选框都不画。
+#:
+#: 【为什么要有这个派生常量】
+#: 与 :data:`ONCE_PER_DAY_TASKS` 同一条理由：名单只能有一个来源。
+#: 前端要靠它决定"画不画勾选框"，所以字段本身随 ``describe_tasks``
+#: 下发；而这个常量给服务端/测试用（一致性守卫见
+#: ``tests/test_services_task_spec.py``）。
+BATCH_TASKS: Final[frozenset[str]] = frozenset(
+    name for name, spec in TASK_SPECS.items() if spec.batch_eligible
+)
+
+
+def batch_tasks() -> tuple[str, ...]:
+    """「一键执行」的任务名，**已按执行顺序排好**。
+
+    排序 = ``batch_order`` 升序（``None`` 记作 0），同权重保持 ``TASK_SPECS``
+    的声明顺序 —— Python 的 ``sorted`` 是稳定排序，所以只要把键写成
+    ``(权重, 声明序号)``，两段语义就都由这一段代码保证。
+
+    【为什么把顺序也放在规格表】
+    用户指定的顺序是"获得体力类优先（宴席第一），其余按规格表顺序"。
+    若把这个特例写在前端（"取勾选项后把 bbq_energy 提到最前"），
+    将来再加一个"需要提前"的任务就得改 JS —— 而顺序本质上是
+    **展示/编排元数据**，与 ``group`` 里那句"组内顺序 = 声明顺序"同源。
+    """
+    declaration_index = {name: index for index, name in enumerate(TASK_SPECS)}
+    members = [
+        (name, spec) for name, spec in TASK_SPECS.items() if spec.batch_eligible
+    ]
+    members.sort(
+        key=lambda item: (
+            item[1].batch_order if item[1].batch_order is not None else 0,
+            declaration_index[item[0]],
+        )
+    )
+    return tuple(name for name, _spec in members)
+
 
 #: 已经因为"缺规格"警告过的任务名（避免每次请求都刷屏）。
 _WARNED_MISSING_SPEC: set[str] = set()
@@ -1198,6 +1542,9 @@ def param_view(param: ParamSpec) -> dict[str, Any]:
         "cli_flag": param.cli_flag,
         "danger": param.danger,
         "from_config": param.from_config,
+        # 数值下限（2026-10-18 新增）：步进器据此决定减号停在哪、手输 0 归到哪。
+        # 必须带出去 —— 前端不按任务名猜下限（规格表是参数面的唯一来源）。
+        "minimum": param.minimum,
         # 界面渲染提示（2026-09-22 新增）：非空 ``choices`` → 下拉；
         # 非空 ``options_source`` → 下拉 + 「拉取」按钮。两者都空 → 照旧输入框。
         "choices": list(param.choices),
@@ -1289,6 +1636,10 @@ def _task_view(spec: TaskSpec, task_class: type[BaseTask] | None) -> dict[str, A
         # **只在第一次登录工具时执行**，见 ONCE_PER_DAY_TASKS 的说明）。
         # 这份名单的唯一来源是规格表，前端不得自己再抄一份。
         "once_per_day": spec.once_per_day,
+        # ★ 2026-10-16：是否参与「一键执行」（决定卡片右侧画不画勾选框）。
+        # 与 once_per_day 同理：名单的唯一来源是规格表，前端不得自己抄一份
+        # （抄了就会出现"新任务登记了却没勾选框"这种没人能一眼看出的漏洞）。
+        "batch_eligible": spec.batch_eligible,
         "consumes": spec.consumes,
         "registered": task_class is not None,
         "requires_auth": bool(getattr(task_class, "requires_auth", False)),

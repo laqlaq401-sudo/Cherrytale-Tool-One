@@ -1119,6 +1119,80 @@ class TestBBQStatusTask:
             assert item["invitable"] is False
             assert item["gap"] is True
 
+    def test_meals_view_carries_cache_expiry(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """★ 2026-10-16：每顿都带 ``expires_at`` = 下一个会让结论变化的时刻。
+
+        【为什么前端需要它】
+        用户要求"宴席的时间不需要每一次都手动刷新，登录时算一次就行"。
+        而窗口起止只存在于 32008 响应里（本地推不出来），所以"算一次"的落法
+        只能是"拉一次然后缓存"。既然要缓存，就必须知道它**什么时候不再可信**
+        —— 否则会拿过期窗口回答"现在能不能吃"。
+        """
+
+        def ms(*parts: int) -> int:
+            return int(datetime(*parts, tzinfo=DISPLAY_TZ).timestamp() * 1000)
+
+        now = ms(2026, 10, 16, 10, 0)
+        patch_transport_meal(
+            monkeypatch,
+            now_ms=now,
+            morning=(
+                SERVER_GID_MORNING,
+                ms(2026, 10, 16, 6, 10),
+                ms(2026, 10, 16, 13, 59),
+            ),
+            evening=(
+                SERVER_GID_EVENING,
+                ms(2026, 10, 16, 14, 0),
+                ms(2026, 10, 17, 6, 0),
+            ),
+        )
+        result = create_task("bbq_status", make_session(), eat=False).run()
+        meals = {item["meal"]: item for item in result.data["meals"]}
+
+        # 10:00 时最早会变的是"早宴席窗口结束"（13:59）；晚宴席 14:00 才开始。
+        # 两顿共用同一个值（前端本来就要取最小值当整份缓存的有效期）。
+        assert meals["morning"]["expires_at"] == ms(2026, 10, 16, 13, 59)
+        assert meals["evening"]["expires_at"] == ms(2026, 10, 16, 13, 59)
+        for item in result.data["meals"]:
+            assert item["expires_at"] > now, "失效时刻必须在未来，否则缓存等于没有"
+
+    def test_meals_view_expiry_falls_back_to_gap_boundary(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """服务端给的两期都已结束 → 失效时刻退回**下一个空档边界**（06:00）。
+
+        【为什么不能算出空值】
+        前端拿它当"最早可以失效的时刻"。空值 = 每次判断都立刻过期
+        = 每点一次就多发两个包（32007/32008 还是风控可见的流量），
+        正是这次要修掉的那个毛病。
+        """
+
+        def ms(*parts: int) -> int:
+            return int(datetime(*parts, tzinfo=DISPLAY_TZ).timestamp() * 1000)
+
+        now = ms(2026, 10, 16, 20, 0)
+        patch_transport_meal(
+            monkeypatch,
+            now_ms=now,
+            morning=(
+                SERVER_GID_MORNING,
+                ms(2026, 10, 16, 6, 10),
+                ms(2026, 10, 16, 13, 59),
+            ),
+            evening=(
+                SERVER_GID_EVENING,
+                ms(2026, 10, 15, 14, 0),
+                ms(2026, 10, 16, 6, 0),
+            ),
+        )
+        result = create_task("bbq_status", make_session(), eat=False).run()
+        expected = ms(2026, 10, 17, 6, 0)  # 下一个空档开始（两顿都不可吃的那一刻）
+        for item in result.data["meals"]:
+            assert item["expires_at"] == expected
+
     def test_meals_view_keeps_morning_edible_when_window_not_started(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

@@ -496,6 +496,13 @@ class TestPlatformIdentityResolution:
         monkeypatch.setattr(config, "SESSION_SAVE_ENABLED", True)
         monkeypatch.setattr(config, "AUTH_TOKEN", "")
         monkeypatch.setattr(config, "PLATFORM_ACCOUNTS_FILE", tmp_path / "accounts.json")
+        # ★ 2026-10-17 补：这些用例会**真的走完登录链** ⇒ 登录签到钩子会发 33055
+        #   （假身份 s=167|p=10000001）。记账文件必须指到临时目录 —— 否则全量跑一次
+        #   就会把"今天已签到"写进**项目根目录的真实记账**（与 `session` fixture
+        #   同一条纪律；2026-10-18 复现：跑本文件即改写为当天）。
+        monkeypatch.setattr(
+            config, "LOGIN_SIGNIN_STATE_FILE", tmp_path / "login_signin.json"
+        )
         monkeypatch.delenv(config.PLATFORM_LOGIN_ACCOUNT_ENV_NAME, raising=False)
         monkeypatch.delenv(config.PLATFORM_LOGIN_PASSWORD_ENV_NAME, raising=False)
         monkeypatch.delenv(config.PLATFORM_ACCOUNT_ENV_NAME, raising=False)
@@ -709,7 +716,14 @@ class TestNetworkReadOnly:
 class TestNetworkFullLogin:
     """完整登录（含 1003 进区）。会话写到**临时文件**，不动你在用的那一份。"""
 
-    def test_full_login_fills_session_state(self, isolated_session_file: Path) -> None:
+    def test_full_login_fills_session_state(
+        self, isolated_session_file: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        # ★ 2026-10-17 补：真登录会触发登录签到钩子（33055）—— 记账文件必须指到
+        #   临时目录，绝不能让联网用例写项目根的真实记账（与离线用例同一纪律）。
+        monkeypatch.setattr(
+            config, "LOGIN_SIGNIN_STATE_FILE", tmp_path / "login_signin.json"
+        )
         session = offline_session()
         result = create_task("login", session).run()
         assert result.ok, result.message

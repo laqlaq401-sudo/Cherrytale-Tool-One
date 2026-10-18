@@ -3,7 +3,7 @@
 测试覆盖：
 1. 模型序列化与反序列化（VIPDetailPacket 24011, VIPDetailRes 24012, BuyEnergyPacket 24005, BuyEnergyRes 24006）；
 2. 阶梯费用计算（StepTollSystemData 表规则验证）；
-3. 任务只读分支（times=0 仅查询不花钱）；
+3. ``times < 1`` 直接拒绝（★ 2026-10-18：0 不再表示只读查询，一个包都不发）；
 4. 任务花钱分支的 fail-closed 防护（未授权闸门拦截）；
 5. 任务演练分支（dry_run 模式组装但不发 24005）；
 6. 任务真实发包分支与上限控制（max_cost 熔断）。
@@ -99,28 +99,30 @@ def _make_fake_session() -> GameSession:
 
 
 class TestBuyEnergyTask:
-    def test_read_only_when_times_zero(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """times=0 时只查 VIPDetailPacket，不发购买包，不扣钻石。"""
+    def test_rejects_when_times_below_one(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """★ 2026-10-18：``times=0`` 不再表示只读 —— 直接拒绝，一个包都不发。
+
+        用户取消了「0 = 只读查询」这个档位。界面下限是 1，但旧存档 / CLI
+        ``--times 0`` / 直接调 API 仍可能送进 0，所以任务层必须明确拒绝：
+        既不静默只读（用户以为买了），也不静默升成 1（用户没要求就真扣钻石）。
+        """
         session = _make_fake_session()
         task = BuyEnergyTask(session, times=0)
-
-        env = GameEnvelope(token="tok", player_id=123)
-        vip_res = VIPDetailRes(buyEnergyCount=2)
-        encoded_res = env.encode_with(vip_res, include_defaults=True)
 
         posted_packets: list[int] = []
 
         def fake_post_raw(self_client: GameClient, body: bytes) -> FakeResponse:
-            view = parse_envelope(body)
-            posted_packets.append(view.packet_id)
-            return FakeResponse(encoded_res)
+            posted_packets.append(parse_envelope(body).packet_id)
+            raise AssertionError("times<1 时不该发送任何包")
 
         monkeypatch.setattr(GameClient, "post_raw", fake_post_raw)
 
         res = task.execute()
-        assert res.ok
-        assert "今日已购买体力 2 次" in res.message
-        assert posted_packets == [24011]
+        assert res.ok is False
+        assert "至少 1 次" in res.message
+        assert posted_packets == []
 
     def test_blocked_when_diamond_not_allowed(
         self, monkeypatch: pytest.MonkeyPatch

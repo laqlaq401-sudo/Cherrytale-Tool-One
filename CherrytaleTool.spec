@@ -44,9 +44,13 @@ def _resolve_config_local():
     return []
 
 
+from PyInstaller.utils.hooks import collect_data_files
+
 datas = [
     ('web', 'web'),
     *_resolve_config_local(),
+    *collect_data_files('pythonnet'),
+    *collect_data_files('webview'),
 ]
 
 # 坚决排除开发素材与巨型逆向目录（节省约 800MB 体积）

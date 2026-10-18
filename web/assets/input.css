@@ -330,7 +330,7 @@ code {
   #win-controls {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 14px;
   }
 
   .iconbtn,
@@ -623,8 +623,9 @@ code {
     color: var(--ios-text-secondary);
     border: 1px solid var(--card-border);
   }
-  .hero-tag img {
-    @apply w-3.5 h-3.5 object-contain flex-none;
+  .hero-tag .hero-tag-ico {
+    @apply w-3.5 h-3.5 flex-none;
+    display: block;
   }
   .hero-power-box {
     @apply flex items-center sm:flex-col sm:items-end justify-between sm:justify-center gap-1 px-3.5 py-2 sm:p-0 rounded-xl bg-purple-500/10 sm:bg-transparent border border-purple-500/20 sm:border-0 z-10;
@@ -696,6 +697,19 @@ code {
   }
 
   /*
+   * 角色区空态（★ 2026-10-18）：有角色、但一个 SSR 都没有。
+   * 必须跨满整行（`grid-column: 1 / -1`）—— 只占一列时这句话会被挤成三行，
+   * 看起来像一张坏掉的角色卡。虚线边框是"这不是数据，是一句说明"的信号。
+   */
+  .role-empty {
+    @apply col-span-full rounded-xl px-3 py-2 text-center text-[12px];
+    grid-column: 1 / -1;
+    color: var(--ios-text-secondary);
+    background-color: var(--stat-bg);
+    border: 1px dashed var(--card-border);
+  }
+
+  /*
    * 角色卡：左边小头像 + 右边两行文字（名字 / Lv·★）。
    * 用 grid 两列（auto = 头像宽度）而不用 flow 布局，是为了让"名字两行"
    * 与头像**顶端对齐**，且头像列宽恒定 —— 否则名字长短会让头像左右跳。
@@ -752,6 +766,16 @@ code {
   .stat-icon {
     @apply text-sm leading-none;
   }
+  /* 线性图标（2026-10-18 全量统一）：尺寸交给 CSS，颜色随主题走。
+     没有 drop-shadow —— 那是给彩色 PNG 压脏用的，描边图上加阴影只会发虚。 */
+  .stat-icon-svg {
+    width: 20px;
+    height: 20px;
+    flex-shrink: 0;
+    display: block;
+    color: var(--ios-text-secondary);
+  }
+  /* 兜底：statCard 仍支持旧的 PNG 路径写法的调用点 */
   .stat-icon-img {
     width: 20px;
     height: 20px;
@@ -909,7 +933,8 @@ code {
   }
 
   .task {
-    @apply rounded-2xl p-3.5 grid gap-2.5 transition-all;
+    @apply rounded-2xl p-3.5 grid content-start gap-2.5 transition-all;
+    align-content: start;
     background-color: var(--task-bg);
     border: 1px solid var(--card-border);
     box-shadow: var(--card-shadow);
@@ -924,9 +949,8 @@ code {
   .task--off {
     @apply opacity-50;
   }
-  /* 展开的复杂任务自动跨双列铺展，让参数表单拥有更宽敞的填写空间 */
+  /* 展开任务保持单列排版，在当前大小下自然向下展开，不强行跨越双列 */
   .task--expanded {
-    @apply xl:col-span-2;
     background-color: var(--task-expanded-bg);
     border-color: var(--card-border-hover);
   }
@@ -965,15 +989,15 @@ code {
     @apply flex flex-wrap items-center gap-2 text-[14px] font-semibold transition-colors;
     color: var(--ios-text-primary);
   }
-  .task-icon-img {
-    width: 26px;
-    height: 26px;
-    object-fit: contain;
+  /* 任务图标（2026-10-18 由 26px PNG 改为 20px 线性 SVG）：
+     原来那层 border-radius + 灰底 + padding + 投影是为彩色原图垫的"相框"，
+     线性图标自带留白，垫了反而显脏；颜色比标题淡一档，不抢文字。 */
+  .task-icon-svg {
+    width: 20px;
+    height: 20px;
     flex-shrink: 0;
-    border-radius: 6px;
-    background: rgba(125, 125, 125, 0.08);
-    padding: 2px;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+    display: block;
+    color: var(--ios-text-secondary);
   }
   .star-icon-img {
     width: 16px;
@@ -1011,6 +1035,29 @@ code {
   .task-params {
     @apply grid gap-2.5 pt-2.5 mt-1 border-t;
     border-color: var(--ios-separator);
+  }
+
+  /* 当任务没有可见参数（如辉煌航迹试炼、每日任务自动执行、公会捐献）时，
+     执行槽位直接承接顶部分隔线与上间距，视觉结构与有参数任务完全一致 */
+  .task-params.hidden + .task-exec-slot:not(:empty),
+  .task-params:empty + .task-exec-slot:not(:empty) {
+    @apply pt-2.5 mt-1 border-t;
+    border-color: var(--ios-separator);
+  }
+
+  /* ★ 2026-10-18：**自带分隔线的专用面板**（当前只有宴席的双按钮面板）。
+     槽位里装的是 .bbq-meals，它自己就有 border-top + pt-2.5 + mt-1；
+     槽位若再补一条，展开后会出现"两条细线夹一块空白"（用户报的那个 bug）。
+     所以这里显式把槽位的分隔线/内距/外边距清零 —— **只留面板自己那条**。
+
+     ⚠️ 选择器必须带上 .task-params 前缀才有足够权重：上面那条规则是
+     `.task-params.hidden + .task-exec-slot:not(:empty)`（0,3,1），
+     单写 `.task-exec-slot--panel` 会被它压过去，改了等于没改。 */
+  .task-params.hidden + .task-exec-slot--panel:not(:empty),
+  .task-params:empty + .task-exec-slot--panel:not(:empty) {
+    border-top-width: 0;
+    padding-top: 0;
+    margin-top: 0;
   }
 
   .task-exec {
@@ -1240,6 +1287,15 @@ code {
   .stepper-btn:hover {
     background-color: var(--btn-default-hover);
   }
+  /* 已到下限时减号不可点（★ 2026-10-18：「购买次数」下限 1，取消 0 次/只读）。
+     只置灰不够 —— 必须让 pressed/active 的缩放也停下，否则手感上仍像能点。 */
+  .stepper-btn:disabled {
+    @apply cursor-not-allowed;
+    opacity: 0.45;
+  }
+  .stepper-btn:disabled:active {
+    transform: none;
+  }
   .stepper-input {
     @apply text-center text-[14px];
     background-color: var(--input-bg);
@@ -1273,6 +1329,21 @@ code {
   .auto-status--run::before { background-color: var(--ios-blue); }
   .auto-status--warn { color: var(--ios-text-secondary); }
   .auto-status--warn::before { background-color: var(--ios-blue); }
+
+  /* 主动任务：一键执行工具行（★ 2026-10-16）
+     左 = 状态行（复用 .auto-status 的圆点与字号，读起来与自动任务那张卡同一种语言），
+     右 = 全选 / 全不选 / 一键执行。
+     窄屏（<640px）让按钮换行，不然"全选 全不选 一键执行（3）"会把状态行挤成一列窄字。 */
+  .manual-batch-bar {
+    @apply flex flex-wrap items-center justify-between gap-2 px-1;
+  }
+  .manual-batch-actions {
+    @apply flex items-center gap-2 flex-none ml-auto;
+  }
+  /* 勾选框所在的右侧操作区（主动任务卡）——与自动任务卡共用 .task-actions 的排版 */
+  .task-actions--pick {
+    @apply ml-1;
+  }
 
   /* 徽标 */
   .badges {
@@ -2337,7 +2408,9 @@ code {
     }
   }
 
-  .task-params {
+  .task-params,
+  .bbq-meals,
+  .task-exec-slot:not(:empty) {
     animation: taskParamsSlideDown 0.22s cubic-bezier(0.16, 1, 0.3, 1);
   }
   @keyframes taskParamsSlideDown {
@@ -2403,45 +2476,36 @@ code {
     transition-delay: 0s !important;
   }
 
-  /* ------------------- 窗口最小化 / 还原 / 最大化过渡动画 ------------------- */
+  /* ------------------- 窗口最小化 / 还原 / 关闭过渡动画 (GPU 硬件加速，无 blur) ------------------- */
   html.win-minimizing {
     opacity: 0 !important;
-    transform: scale(0.9) translateY(45px) !important;
-    filter: blur(5px) !important;
-    transition: opacity 0.18s ease-in, transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), filter 0.2s ease !important;
+    transform: translate3d(0, 24px, 0) scale(0.96) !important;
+    transition: opacity 0.14s ease-out, transform 0.14s cubic-bezier(0.16, 1, 0.3, 1) !important;
     pointer-events: none !important;
+    will-change: opacity, transform;
   }
 
   html.win-restoring {
-    animation: winRestoreIn 0.24s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    animation: winRestoreIn 0.16s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    will-change: opacity, transform;
   }
   @keyframes winRestoreIn {
     from {
-      opacity: 0.5;
-      transform: scale(0.94) translateY(25px);
-      filter: blur(3px);
+      opacity: 0.6;
+      transform: translate3d(0, 16px, 0) scale(0.98);
     }
     to {
       opacity: 1;
-      transform: scale(1) translateY(0);
-      filter: blur(0);
+      transform: translate3d(0, 0, 0) scale(1);
     }
-  }
-
-  html.win-maximizing-transition,
-  html.win-maximizing-transition body,
-  html.win-maximizing-transition .topbar,
-  html.win-maximizing-transition .sidebar,
-  html.win-maximizing-transition .content,
-  html.win-maximizing-transition .shell {
-    transition: all 0.22s cubic-bezier(0.16, 1, 0.3, 1) !important;
   }
 
   html.win-closing {
     opacity: 0 !important;
-    transform: scale(0.94) !important;
-    transition: all 0.15s ease-out !important;
+    transform: translate3d(0, 10px, 0) scale(0.97) !important;
+    transition: opacity 0.12s ease-out, transform 0.12s ease-out !important;
     pointer-events: none !important;
+    will-change: opacity, transform;
   }
 
   .hidden {

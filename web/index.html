@@ -50,7 +50,7 @@
     <link rel="manifest" href="assets/manifest.webmanifest" />
     <link rel="icon" type="image/png" href="assets/icons/brand/favicon.png" />
     <link rel="apple-touch-icon" href="assets/icons/brand/icon-192.png" />
-    <link rel="stylesheet" href="assets/styles.css?v=20261006_8" />
+    <link rel="stylesheet" href="assets/styles.css?v=20261018_1" />
   </head>
   <body>
     <!-- ================= 顶栏：品牌 + 连接状态 + 窗口控制停靠位 =================
@@ -156,16 +156,30 @@
         <!-- ③ 主动任务 -->
         <section id="panel-manual" class="panel hidden">
           <p class="hint panel-hint">
-            主动任务涉及资源消耗或参数配置，需展开并点击「执行」触发。
+            主动任务涉及资源消耗或参数配置，需展开并点击「执行」触发；勾选后可用顶部「一键执行」按顺序批量跑完（每个任务后自动领一次活跃宝箱，宴席除外）。
           </p>
+          <!-- ★ 2026-10-16：一键执行工具行。
+               状态行与自动任务那张卡用的是同一套 .auto-status 视觉（圆点 + 一句话），
+               让"这一区现在会做什么"在两边读起来是同一种语言。
+               按钮 id 刻意**不叫** #btn-run（那个旧 id 已被 verify_web_ui.py
+               钉成"必须不存在"），勾选框也刻意不带 .task-exec（同一脚本按它数
+               "展开后恰好一个执行按钮"）。 -->
+          <div class="manual-batch-bar">
+            <p id="manual-batch-status" class="auto-status">主动任务：读取中…</p>
+            <div class="manual-batch-actions">
+              <button id="btn-select-all" class="btn btn--ghost btn--compact" type="button" title="勾选全部可批量执行的任务">全选</button>
+              <button id="btn-select-none" class="btn btn--ghost btn--compact" type="button" title="取消全部勾选">全不选</button>
+              <button id="btn-run-manual" class="btn btn--primary" type="button">一键执行</button>
+            </div>
+          </div>
           <div id="tasks-manual" class="tasks"></div>
         </section>
 
-        <!-- ④ 钻石使用（总闸在这里；用途开关在具体任务的参数里）
-             ★ 2026-10-05：开关框下面原本还有两段解释
-             （"当前服务端配置：…" 与 "开启总闸且具体任务授权后才会消耗钻石。"），
-             按用户要求删除 —— 只留开关框里那句，够了。 -->
+        <!-- ④ 钻石使用（总闸在这里；直接执行带钻石消耗的任务） -->
         <section id="panel-diamond" class="panel hidden">
+          <p class="hint panel-hint">
+            钻石消耗任务需开启上方总闸后展开并点击「执行」；宴席因具有免费享用属性保留在主动任务板块。
+          </p>
           <div class="card">
             <label class="switch switch--danger">
               <input id="opt-allow-diamond" type="checkbox" />
@@ -176,7 +190,7 @@
             </label>
           </div>
           <div class="card">
-            <h2 class="card-title">会涉及钻石的任务</h2>
+            <h2 class="card-title">钻石任务</h2>
             <div id="tasks-diamond" class="tasks"></div>
           </div>
         </section>
@@ -503,7 +517,7 @@
       </div>
     </section>
 
-    <script src="assets/common.js?v=20261005_8"></script>
-    <script src="assets/app.js?v=20261006_5"></script>
+    <script src="assets/common.js?v=20261019_1"></script>
+    <script src="assets/app.js?v=20261019_1"></script>
   </body>
 </html>

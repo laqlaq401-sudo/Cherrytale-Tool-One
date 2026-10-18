@@ -207,8 +207,8 @@ class TestReadOnlyEndpoints:
         payload = _get(base_url, "/api/tasks").json()
 
         group_keys = [group["key"] for group in payload["groups"]]
-        # 分组按"风险"划分：自动（无消耗）/ 主动（有消耗或需参数）/ 待实现
-        assert group_keys == ["auto", "manual", "planned"]
+        # 分组按"风险"划分：自动（无消耗）/ 主动（有消耗或需参数）/ 钻石使用 / 待实现
+        assert group_keys == ["auto", "manual", "diamond", "planned"]
 
         tasks = {task["name"]: task for task in payload["tasks"]}
         # 已注册的任务必须**全部**出现在清单里（缺一个，网页上就少一个可选项）
@@ -885,9 +885,10 @@ class TestLoginFlowEndpoints:
         「我的角色」分组靠它。共 **6 个**。这里一并守住四件事：
 
         1. 请求里的**任务清单与顺序** —— 少一个就是界面上少一张卡片；
-        2. 荣耀之巅的 ``battles`` 必须是 **0**（显式只读）—— 否则会**真开打**；
-           它现在是该任务的参数（界面上叫「荣耀之巅 → 打几场」，不再是
-           「运行选项 → 进阶」），界面上填了什么都不能被这个接口沿用；
+        2. 荣耀之巅走的是**只读任务 ``top_pvp_status``**（★ 2026-10-18）——
+           它的包白名单里只有 39001，结构上打不了一场。以前复用
+           ``top_pvp_battle + battles=0``，而那个 0 现在等于"打到次数用完"，
+           继续复用就会让"刷新信息面板"变成真开打；
         3. 失败的只读任务只进 ``errors``，其余字段照常返回；
         4. ``roles`` 的返回体要带上 ``source``（实时名册 / 登录快照）——
            界面据此提示"这份数据是什么时候的"，不写清楚会被当成实时数据。
@@ -896,13 +897,15 @@ class TestLoginFlowEndpoints:
 
         def fake_run_inline(self, request):  # type: ignore[no-untyped-def]
             captured["names"] = [task.name for task in request.tasks]
-            # ★ 2026-09-25：场数不再是运行级字段，而是 top_pvp_battle 的任务参数
+            # ★ 2026-10-18：荣耀之巅改走**只读**任务 top_pvp_status（无参数）。
+            # 以前这里钉的是 top_pvp_battle + battles=0；那个 0 现在等于
+            # "打到次数用完"，复用战斗任务会让"刷新信息面板"真的开打。
             captured["top_pvp_params"] = dict(
                 next(
                     (
                         task.params
                         for task in request.tasks
-                        if task.name == "top_pvp_battle"
+                        if task.name == "top_pvp_status"
                     ),
                     {},
                 )
@@ -928,6 +931,10 @@ class TestLoginFlowEndpoints:
                             "source": "live",
                             "fallback_reason": "",
                             "role_count": 2,
+                            # ★ 2026-10-18：「我的角色」只展示 SSR。
+                            #   任务层只打 is_ssr 标记，过滤在接口层做 ——
+                            #   这里一条 SSR、一条 SR，用来守"只留前者"。
+                            "rarity_available": True,
                             "roles": (
                                 {
                                     "role_sid": 155242087,
@@ -936,6 +943,7 @@ class TestLoginFlowEndpoints:
                                     "level": 50,
                                     "star": 5,
                                     "name": "庫爾蒂絲",
+                                    "is_ssr": True,
                                 },
                                 {
                                     "role_sid": 223860075,
@@ -944,6 +952,7 @@ class TestLoginFlowEndpoints:
                                     "level": 42,
                                     "star": 4,
                                     "name": "將臣",
+                                    "is_ssr": False,
                                 },
                             ),
                         },
@@ -962,9 +971,9 @@ class TestLoginFlowEndpoints:
                         data={"remain_count": 2, "now_score": 880, "now_rank": 15},
                     ),
                     runner.StepResult(
-                        name="top_pvp_battle",
+                        name="top_pvp_status",
                         ok=True,
-                        message="只读完成（未发起任何挑战）",
+                        message="荣耀之巅（只读）：ok",
                         data={"mode": "read_only", "my_ranking": 7, "my_points": 1234},
                     ),
                 ]
@@ -993,13 +1002,11 @@ class TestLoginFlowEndpoints:
             "arena_status",
             "wudou_status",
             "yimo_status",
-            "top_pvp_battle",
+            "top_pvp_status",
         ]
-        # ② 只读保证：荣耀之巅的场数被**显式**钉成 0
-        #    （不是"不传、靠 config 默认值"—— 那个默认值可以被环境变量改掉，
-        #     改掉之后"刷新一下信息面板"就变成真开打了）
-        assert captured["top_pvp_params"]["battles"] == 0
-        assert captured["top_pvp_params"]["interval"] == 0
+        # ② 只读保证：走的是**没有挑战包白名单**的 top_pvp_status，且不带任何参数
+        #    （战斗任务的 battles 现在 0 = 打到次数用完，绝不能被这个接口复用）
+        assert captured["top_pvp_params"] == {}
         # ③ 数据与逐项容错
         assert payload["game"]["coins"] == 37193710
         assert payload["game"]["diamonds"] == 3426
@@ -1011,12 +1018,74 @@ class TestLoginFlowEndpoints:
         assert payload["top_pvp"]["mode"] == "read_only"
         assert payload["top_pvp"]["my_ranking"] == 7
         assert payload["top_pvp"]["my_points"] == 1234
-        # ④ 角色：条数、来源标记、以及逐条的展示字段都要透出去
-        assert payload["roles"]["count"] == 2
+        # ④ 角色：**只透 SSR**（★ 2026-10-18 用户要求：SR / R 排除）
+        #
+        #   任务层返回的是全量名册（role_count=2，带 is_ssr 标记），
+        #   接口层负责展示口径 —— 所以 count 是 SSR 条数、total_count 是全量，
+        #   items 里只剩 SSR 那条。三个数必须同时对，否则界面会自相矛盾。
+        assert payload["roles"]["count"] == 1
+        assert payload["roles"]["total_count"] == 2
+        assert payload["roles"]["rarity_filter"] == "ok"
         assert payload["roles"]["source"] == "live"
-        assert [item["name"] for item in payload["roles"]["items"]] == ["庫爾蒂絲", "將臣"]
+        assert [item["name"] for item in payload["roles"]["items"]] == ["庫爾蒂絲"]
         assert payload["roles"]["items"][0]["role_sid"] == 155242087
         assert payload["errors"] and "arena_status" in payload["errors"][0]
+
+    def test_player_endpoint_fails_open_when_rarity_unavailable(
+        self, web_dir: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """属性表读不到 → **不过滤**（fail-open）：全量透出 + 明确标注。
+
+        为什么不是"严格只给 SSR"：「我的角色」只显示 SSR 是展示口径，
+        不能因为一次配置表读取失败就变成"一个角色都没有" —— 那看起来像
+        账号数据丢了。宁可多显示，也要让人知道这次没过滤。
+        """
+
+        def fake_run_inline(self, request):  # type: ignore[no-untyped-def]
+            return runner.RunReport(
+                steps=[
+                    runner.StepResult(
+                        name="roles",
+                        ok=True,
+                        message="角色 2 个（来源：实时名册（5012））",
+                        data={
+                            "source": "live",
+                            "fallback_reason": "",
+                            "role_count": 2,
+                            "rarity_available": False,
+                            "roles": (
+                                {
+                                    "role_sid": 1,
+                                    "role_id": 130003000,
+                                    "role_info_id": 133003000,
+                                    "level": 50,
+                                    "star": 5,
+                                    "name": "庫爾蒂絲",
+                                    "is_ssr": None,
+                                },
+                                {
+                                    "role_sid": 2,
+                                    "role_id": 130007400,
+                                    "role_info_id": 133007400,
+                                    "level": 42,
+                                    "star": 4,
+                                    "name": "將臣",
+                                    "is_ssr": None,
+                                },
+                            ),
+                        },
+                    ),
+                ]
+            )
+
+        monkeypatch.setattr(state.RunManager, "run_inline", fake_run_inline)
+        with _serve(webapp.create_app(web_dir=web_dir)) as url:
+            payload = _get(url, "/api/player").json()
+
+        assert payload["roles"]["rarity_filter"] == "unavailable"
+        assert payload["roles"]["count"] == 2, "判不出来时保留全部，绝不静默删"
+        assert payload["roles"]["total_count"] == 2
+        assert [item["role_sid"] for item in payload["roles"]["items"]] == [1, 2]
 
     def test_main_stage_status_endpoint(
         self, web_dir: Path, monkeypatch: pytest.MonkeyPatch

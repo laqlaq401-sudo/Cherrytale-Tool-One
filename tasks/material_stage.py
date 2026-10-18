@@ -42,11 +42,6 @@ from models.material_stage import (
     ALLOWED_PACKET_IDS,
     FORBIDDEN_PACKET_IDS,
     PACKET_PURPOSE,
-    FightDataClass,
-    FightingRequestPacket,
-    FightingResponseRes,
-    FightingResultPacket,
-    FightingResultRes,
     GetAreaByDifficultyPacket,
     GetAreaByDifficultyRes,
     MaterialArea,
@@ -54,7 +49,6 @@ from models.material_stage import (
     SweepSectionPacket,
     SweepSectionRes,
     get_material_areas,
-    make_battle_server_verify,
     resolve_material_area,
     resolve_material_section,
 )
@@ -125,7 +119,11 @@ class SweepMaterialTask(BaseTask):
         self.section_query = (
             section.strip() if isinstance(section, str) and section.strip() else None
         )
-        self.allow_unpassed = bool(allow_unpassed)
+        if allow_unpassed:
+            self.logger.warning(
+                "参数 allow_unpassed 已弃用：素材关卡严格仅支持已通关关卡扫荡，不再执行任何未通关模拟战斗。"
+            )
+        self.allow_unpassed = False
 
     def emit(self, msg: str) -> None:
         self.logger.info(msg)
@@ -292,9 +290,10 @@ class SweepMaterialTask(BaseTask):
         item_kinds = (
             count_item_kinds(last.settlement_items()) if last is not None else 0
         )
+        # ★ 2026-10-18：不再说"N 轮 × 每轮最多 M 次"（实现细节）
         message = (
             f"扫荡到次数耗尽完成：对关卡 {section.name} 共扫 {total} 次"
-            f"（{len(rounds)} 轮 × 每轮最多 {self.UNTIL_EXHAUSTED_ROUND_TIMES} 次）："
+            f"（分批进行，每批最多 {self.UNTIL_EXHAUSTED_ROUND_TIMES} 次）："
             f"{reason}"
         )
         self.emit(message)
@@ -360,8 +359,10 @@ class SweepMaterialTask(BaseTask):
         area_res = area_view.decode_sub_packet(GetAreaByDifficultyRes)
         server_area_ids = {item.areaID for item in area_res.areaStateList}
         if area.area_id not in server_area_ids:
+            # ★ 2026-10-18：区域 ID 是内部编号，换区域时用户只看名字；
+            # 半角括号也统一成全角。
             msg = (
-                f"区域【{area.name}】(ID: {area.area_id}) 不在服务端当前的素材区清单里"
+                f"区域【{area.name}】不在服务端当前的素材区清单里"
                 f"（共 {len(server_area_ids)} 个区）—— 区域清单会轮换，请换个区域或重新确认"
             )
             self.emit(msg)
@@ -490,60 +491,30 @@ class SweepMaterialTask(BaseTask):
 
         is_ok = sweep_res.is_success() if callable(sweep_res.is_success) else bool(sweep_res.is_success)
         if not is_ok or sweep_res.errorCode != 0:
-            # ★ 未通关（errorCode=-1）：按开关回退首通 → 重扫一次（2026-10-03 新流程）
             if sweep_res.errorCode == -1:
-                if not self.allow_unpassed:
-                    msg = (
-                        f"关卡 {target_section.name} 尚未首通（服务端 errorCode=-1），"
-                        "当前未开启首通允许（--allow-unpassed），跳过扫荡"
-                    )
-                    self.emit(msg)
-                    return TaskResult(
-                        task=self.name,
-                        ok=True,
-                        message=msg,
-                        data={
-                            "section_id": target_section.section_id,
-                            "passed": False,
-                            "error_code": -1,
-                        },
-                    )
-                self.emit(f"检测到关卡 {target_section.name} 未首通，正在执行首通挑战...")
-                first_pass_ok = self._do_first_pass(game, target_section)
-                if not first_pass_ok:
-                    msg = f"关卡 {target_section.name} 模拟首通失败"
-                    self.emit(msg)
-                    return TaskResult(
-                        task=self.name,
-                        ok=False,
-                        message=msg,
-                        data={"section_id": target_section.section_id},
-                    )
-                self.emit(f"关卡 {target_section.name} 首通成功，重新扫荡...")
-                # 首通后重扫同样是 11009 → 同样必须 include_defaults=True
-                sweep_view = self._guarded_send(
-                    game, sweep_req, SweepSectionRes, include_defaults=True
+                msg = (
+                    f"关卡 {target_section.name} 尚未首通（服务端 errorCode=-1），"
+                    "素材关卡严格仅支持已通关关卡扫荡，跳过扫荡。请先在游戏客户端手动完成首通。"
                 )
-                sweep_res = sweep_view.decode_sub_packet(SweepSectionRes)
-                is_ok = sweep_res.is_success() if callable(sweep_res.is_success) else bool(sweep_res.is_success)
-                if not is_ok or sweep_res.errorCode != 0:
-                    msg = f"首通后重扫仍失败 (errorCode={sweep_res.errorCode})"
-                    self.emit(msg)
-                    return TaskResult(
-                        task=self.name,
-                        ok=False,
-                        message=msg,
-                        data={"error_code": sweep_res.errorCode},
-                    )
-            else:
-                msg = f"扫荡关卡 {target_section.name} 失败 (errorCode={sweep_res.errorCode})"
                 self.emit(msg)
                 return TaskResult(
                     task=self.name,
-                    ok=False,
+                    ok=True,
                     message=msg,
-                    data={"error_code": sweep_res.errorCode},
+                    data={
+                        "section_id": target_section.section_id,
+                        "passed": False,
+                        "error_code": -1,
+                    },
                 )
+            msg = f"扫荡关卡 {target_section.name} 失败（errorCode={sweep_res.errorCode}）"
+            self.emit(msg)
+            return TaskResult(
+                task=self.name,
+                ok=False,
+                message=msg,
+                data={"error_code": sweep_res.errorCode},
+            )
 
         # ★ 2026-10-04 单位/口径修正：
         # ① ``settlement_items()`` 返回的是**一件一件的道具**，``len()`` 是**条数**，
@@ -606,32 +577,3 @@ class SweepMaterialTask(BaseTask):
             message=msg,
             data={"category": self.category, "areas": areas_data},
         )
-
-    def _do_first_pass(self, game: GameClient, section: MaterialSection) -> bool:
-        """模拟首通 cheatCheck=0 关卡。"""
-        # 1. 创建战斗 Token (11015)
-        token_req = FightingRequestPacket(sectionID=section.section_id, teamID=1)
-        token_view = self._guarded_send(game, token_req, FightingResponseRes)
-        token_res = token_view.decode_sub_packet(FightingResponseRes)
-
-        if not token_res.is_success() or not token_res.fightToken:
-            _LOGGER.error("创建战斗 Token 失败: errorCode=%d", token_res.errorCode)
-            return False
-
-        fight_token = token_res.fightToken
-
-        # 2. 构造校验并提交战斗结算 (11017)
-        verify = make_battle_server_verify(section_id=section.section_id)
-        over_req = FightingResultPacket(
-            fightData=FightDataClass(
-                token=fight_token,
-                battleServerVerify=verify,
-            ),
-            winLose=1,
-            starCount=[1, 1, 1],
-            timeCostSec=15,
-        )
-        over_view = self._guarded_send(game, over_req, FightingResultRes)
-        over_res = over_view.decode_sub_packet(FightingResultRes)
-
-        return over_res.is_success()

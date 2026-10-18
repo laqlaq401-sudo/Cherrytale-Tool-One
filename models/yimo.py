@@ -28,6 +28,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Final
 
 from pydantic import Field
@@ -77,6 +78,49 @@ class OpenYimoRewardRes(ProtoMessage):
         return self.errorCode == 0
 
 
+class YimoBossPartDataClass(ProtoMessage):
+    """失控炼成阵单个部位状态（TypeDefIndex 9139）。"""
+
+    proto_class_name = "YimoBossPartDataClass"
+
+    bossPartID: int = 0
+    bossPartHp: int = 0
+
+    @classmethod
+    def field_tag_map(cls) -> dict[str, int]:
+        return {
+            name: idx
+            for idx, name in enumerate(("bossPartID", "bossPartHp"), start=1)
+        }
+
+
+class YimoBossDataClass(ProtoMessage):
+    """失控炼成阵当前 Boss 状态（TypeDefIndex 9138）。"""
+
+    proto_class_name = "YimoBossDataClass"
+
+    bossID: int = 0
+    bossPart: list[YimoBossPartDataClass] = Field(default_factory=list)
+    bossLv: int = 0
+    bossRate: int = 0
+
+    @classmethod
+    def field_tag_map(cls) -> dict[str, int]:
+        return {
+            name: idx
+            for idx, name in enumerate(("bossID", "bossPart", "bossLv", "bossRate"), start=1)
+        }
+
+    def get_active_part(self) -> int:
+        """挑选当前血量存活（hp > 0）的部位 ID；若全破或无部位，回退到首个部位或默认值。"""
+        for p in self.bossPart:
+            if p.bossPartHp > 0:
+                return p.bossPartID
+        if self.bossPart:
+            return self.bossPart[0].bossPartID
+        return 661000003
+
+
 class GetYimoStateRes(ProtoMessage):
     """失控炼成阵状态响应（消息号 22102）。"""
 
@@ -95,8 +139,8 @@ class GetYimoStateRes(ProtoMessage):
     #: ⚠️ 本模块只是**展示**它，让使用者知道"再买要花多少" ——
     #: 本项目在竞技板块**绝不发购买请求**（``22103`` 已进禁发清单）。
     nextDiamondCost: bytes = b""
-    #: 当前 boss 数据（``YimoBossDataClass`` 未建模 → 原始字节；用 :meth:`has_boss_data` 判断有无）
-    bossData: bytes = b""
+    #: 当前 boss 数据（结构化 YimoBossDataClass，兼容原始 bytes）
+    bossData: YimoBossDataClass | bytes | None = None
     #: 弹窗提示文案（``List<string>``，协议里就是字符串列表）
     popUpInfo: list[str] = Field(default_factory=list)
     #: 全服达标宝箱数据（共 3 份宝箱：662000001~662000003）
@@ -106,7 +150,31 @@ class GetYimoStateRes(ProtoMessage):
 
     def has_boss_data(self) -> bool:
         """服务端是否下发了 boss 数据（活动开放时才有）。"""
-        return len(self.bossData) > 0
+        if self.bossData is None:
+            return False
+        if isinstance(self.bossData, (bytes, bytearray)):
+            return len(self.bossData) > 0
+        return self.bossData.bossID > 0 or self.bossData.bossLv > 0 or len(self.bossData.bossPart) > 0
+
+    def get_boss_data(self) -> YimoBossDataClass | None:
+        """获取解包后的 Boss 数据对象。"""
+        if isinstance(self.bossData, YimoBossDataClass):
+            return self.bossData
+        if isinstance(self.bossData, (bytes, bytearray)) and len(self.bossData) > 0:
+            try:
+                return YimoBossDataClass.decode(self.bossData)
+            except Exception:
+                return None
+        return None
+
+    def get_target_part_and_lv(self) -> tuple[int, int]:
+        """动态提取当前可攻击的有效部位 ID 与当前 Boss 等级。"""
+        data = self.get_boss_data()
+        if data:
+            part = data.get_active_part()
+            lv = data.bossLv if data.bossLv > 0 else 1
+            return part, lv
+        return 661000003, 1
 
     def all_chests_claimed(self) -> bool:
         """3 份全服宝箱是否全部已经领取（全部 rewardState == 2）。"""
@@ -134,18 +202,49 @@ class GetYimoStateRes(ProtoMessage):
         return f"全服宝箱 {claimed}/{total} 已领（当前可领 {claimable} 个）"
 
     def summary(self) -> str:
-        """一行摘要（日志用）。"""
+        """一行摘要（日志用）。
+
+        ★ 2026-10-18：不再输出内部状态字段 —— 旧文案里的 ``boss 数据=有``
+        与 ``下次购买价格字段 20B（仅展示，不购买）`` 是开发者视角
+        （"20B" 是字节数），对用户没有任何意义。
+        """
         text = (
-            f"剩余次数={self.remainCount}，已购买={self.buyExtraCount}，"
-            f"积分={self.nowScore}，排名={self.nowRank}，"
-            f"boss 数据={'有' if self.has_boss_data() else '无'}，"
-            f"{self.chest_summary()}"
+            f"剩余次数 {self.remainCount}，积分 {self.nowScore}，"
+            f"排名 {self.nowRank}，{self.chest_summary()}"
         )
-        if self.nextDiamondCost:
-            text += f"，下次购买价格字段 {len(self.nextDiamondCost)}B（仅展示，不购买）"
         if self.popUpInfo:
             text += f"，提示：{' / '.join(self.popUpInfo[:2])}"
         return text
+
+
+# ---------------------------------------------------------------------------
+# 配置表访问（部位血量）—— 扣血万分比必须按配置折算，不能写死常量
+# ---------------------------------------------------------------------------
+def load_part_base_hp(path: Path | None = None) -> dict[int, int]:
+    """读取 ``YimoPartData`` 的 ``{部位ID: 基础血量}``。
+
+    ``dmgHpRate`` 是「本次伤害占部位血量的万分比」，分母必须来自配置表
+    （``YimoPartData.basePartHp``，实测 200,000,000），不能凭抓包里某个样本反推。
+
+    :param path: 覆盖配置表路径（单测用）。
+    :return: 部位 ID → 基础血量；表读不到时返回空字典（调用方据此降级为 0 而不是瞎猜）。
+    """
+    from models.config_table import read_table, to_int
+    from models.game_config import table_path
+
+    try:
+        table = path or table_path("YimoPartData")
+        rows = read_table(table)
+    except Exception:  # 配置缺失不应让整个任务崩掉，按「不知道」处理
+        return {}
+
+    result: dict[int, int] = {}
+    for row in rows:
+        part_id = to_int(row, "partID", default=0) or 0
+        base_hp = to_int(row, "basePartHp", default=0) or 0
+        if part_id > 0 and base_hp > 0:
+            result[part_id] = base_hp
+    return result
 
 
 # ---------------------------------------------------------------------------
